@@ -1,10 +1,10 @@
-
 name: Daily GA4/Ads Report
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "10 0 * * *"  # 00:10 UTC = 09:10 KST
+    # 09:10 KST = 00:10 UTC
+    - cron: "10 0 * * *"
 
 permissions:
   contents: read
@@ -18,6 +18,9 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      TZ: Asia/Seoul
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -31,6 +34,9 @@ jobs:
         run: |
           python -m pip install -U pip
           pip install -r requirements.txt
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
 
       - name: Decode secrets to files (NEVER commit)
         env:
@@ -61,17 +67,37 @@ jobs:
         run: |
           python src/daily_report.py
 
+      - name: Prepare Pages site root
+        run: |
+          TODAY="$(date +%F)"
+          rm -rf site
+          mkdir -p site
+
+          # 오늘 리포트를 사이트 루트(index.html)로 올리기
+          if [ -d "reports/${TODAY}" ]; then
+            cp -r "reports/${TODAY}/." site/
+          else
+            echo "No reports/${TODAY} directory found."
+            ls -la reports || true
+            exit 1
+          fi
+
+          # 히스토리 폴더도 같이 제공
+          mkdir -p site/reports
+          cp -r reports/* site/reports/ || true
+
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: reports
+          path: site
 
   deploy:
+    runs-on: ubuntu-latest
+    needs: build
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
+
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
