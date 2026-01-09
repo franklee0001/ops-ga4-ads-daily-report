@@ -72,6 +72,11 @@ jobs:
           TODAY="$(date +%F)"
           rm -rf site
           mkdir -p site
+          mkdir -p site/assets
+
+          if [ -d assets ]; then
+            cp -R assets/. site/assets/
+          fi
 
           # 오늘 리포트를 사이트 루트(index.html)로 올리기
           if [ -d "reports/${TODAY}" ]; then

@@ -130,8 +130,8 @@ class ReportGenerator:
         last_30_start = max(start, end - timedelta(days=29))
         last_30_dates = iso_date_range(last_30_start, end)
 
-        ga4_daily = self._get_ga4_daily_series(self.start_date, self.end_date, all_dates)
-        ads_daily, has_conv_value = self._get_ads_daily_series(self.start_date, self.end_date, all_dates)
+        ga4_daily, ga4_has_data = self._get_ga4_daily_series(self.start_date, self.end_date, all_dates)
+        ads_daily, ads_has_data, has_conv_value = self._get_ads_daily_series(self.start_date, self.end_date, all_dates)
 
         summary = self._build_summary(ga4_daily, ads_daily, last_30_dates, all_dates, has_conv_value)
         tables = self._build_tables(last_30_start.isoformat(), self.end_date)
@@ -139,10 +139,10 @@ class ReportGenerator:
         return {
             "summary": summary,
             "tables": tables,
-            "charts": self._build_chart_data(ga4_daily, ads_daily, last_30_dates),
+            "charts": self._build_chart_data(ga4_daily, ads_daily, last_30_dates, ga4_has_data, ads_has_data),
         }
 
-    def _get_ga4_daily_series(self, start_date: str, end_date: str, all_dates: list[str]) -> dict:
+    def _get_ga4_daily_series(self, start_date: str, end_date: str, all_dates: list[str]) -> tuple[dict, bool]:
         rows = self.ga4.run_report(
             ["date"],
             ["sessions", "activeUsers"],
@@ -156,9 +156,9 @@ class ReportGenerator:
                 continue
             data[date_key]["sessions"] = row.get("sessions", 0)
             data[date_key]["activeUsers"] = row.get("activeUsers", 0)
-        return data
+        return data, bool(rows)
 
-    def _get_ads_daily_series(self, start_date: str, end_date: str, all_dates: list[str]) -> tuple[dict, bool]:
+    def _get_ads_daily_series(self, start_date: str, end_date: str, all_dates: list[str]) -> tuple[dict, bool, bool]:
         query_with_value = (
             "SELECT segments.date, metrics.impressions, metrics.clicks, metrics.cost_micros, "
             "metrics.conversions, metrics.conversions_value "
@@ -198,7 +198,7 @@ class ReportGenerator:
             if conv_value is not None:
                 has_conv_value = True
                 data[date_key]["conversion_value"] += conv_value
-        return data, has_conv_value
+        return data, bool(rows), has_conv_value
 
     def _build_summary(self, ga4_daily: dict, ads_daily: dict, last_30_dates: list[str], all_dates: list[str], has_conv_value: bool) -> dict:
         def sum_series(dates: list[str]) -> dict:
@@ -266,16 +266,16 @@ class ReportGenerator:
         labels = [
             ("ga4_sessions", "GA4 세션", "회"),
             ("ga4_active_users", "GA4 활성 사용자", "명"),
-            ("ads_cost", "Ads 비용", "원"),
-            ("ads_impressions", "Ads 노출", "회"),
-            ("ads_clicks", "Ads 클릭", "회"),
-            ("ads_conversions", "Ads 전환", "건"),
-            ("ads_ctr", "Ads CTR", "%"),
-            ("ads_cpc", "Ads CPC", "원"),
-            ("ads_cpa", "Ads CPA", "원"),
+            ("ads_cost", "광고 비용", "원"),
+            ("ads_impressions", "광고 노출", "회"),
+            ("ads_clicks", "광고 클릭", "회"),
+            ("ads_conversions", "광고 전환", "건"),
+            ("ads_ctr", "광고 클릭률", "%"),
+            ("ads_cpc", "클릭당 비용", "원"),
+            ("ads_cpa", "전환당 비용", "원"),
         ]
         if has_conv_value:
-            labels.append(("ads_roas", "Ads ROAS", "배"))
+            labels.append(("ads_roas", "광고 수익률", "배"))
 
         cards = []
         for key, label, unit in labels:
@@ -296,19 +296,19 @@ class ReportGenerator:
                 unit_text = unit
 
             sub = None
-        if include_avg and key in {
-            "ga4_sessions",
-            "ga4_active_users",
-            "ads_cost",
-            "ads_impressions",
-            "ads_clicks",
-            "ads_conversions",
-        }:
-            avg_value = safe_div(metrics.get(key, 0), days)
-            if key == "ads_cost":
-                sub = f"평균 {format_currency(avg_value)}/일"
-            else:
-                sub = f"평균 {format_float(avg_value, 1)}{unit}/일"
+            if include_avg and key in {
+                "ga4_sessions",
+                "ga4_active_users",
+                "ads_cost",
+                "ads_impressions",
+                "ads_clicks",
+                "ads_conversions",
+            }:
+                avg_value = safe_div(metrics.get(key, 0), days)
+                if key == "ads_cost":
+                    sub = f"평균 {format_currency(avg_value)}/일"
+                else:
+                    sub = f"평균 {format_float(avg_value, 1)}{unit}/일"
 
             cards.append({
                 "label": label,
@@ -397,7 +397,7 @@ class ReportGenerator:
                 ],
             },
             "ads_campaigns": {
-                "headers": ["캠페인", "비용", "노출", "클릭", "전환", "CTR", "CPC", "CPA"],
+                "headers": ["캠페인", "비용", "노출", "클릭", "전환", "클릭률", "클릭당 비용", "전환당 비용"],
                 "rows": [
                     [
                         row["campaign"],
@@ -414,7 +414,14 @@ class ReportGenerator:
             },
         }
 
-    def _build_chart_data(self, ga4_daily: dict, ads_daily: dict, last_30_dates: list[str]) -> list[dict]:
+    def _build_chart_data(
+        self,
+        ga4_daily: dict,
+        ads_daily: dict,
+        last_30_dates: list[str],
+        ga4_has_data: bool,
+        ads_has_data: bool,
+    ) -> list[dict]:
         charts = []
         chart_specs = [
             (
@@ -423,6 +430,7 @@ class ReportGenerator:
                 [ga4_daily[d]["sessions"] for d in last_30_dates],
                 "세션",
                 "count",
+                ga4_has_data,
             ),
             (
                 "ga4_active_users_30d.png",
@@ -430,50 +438,56 @@ class ReportGenerator:
                 [ga4_daily[d]["activeUsers"] for d in last_30_dates],
                 "활성 사용자",
                 "count",
+                ga4_has_data,
             ),
             (
                 "ads_cost_30d.png",
-                "Ads 비용 추이 (최근 30일)",
+                "광고 비용 추이 (최근 30일)",
                 [ads_daily[d]["cost"] for d in last_30_dates],
                 "비용",
                 "currency",
+                ads_has_data,
             ),
             (
                 "ads_conversions_30d.png",
-                "Ads 전환 추이 (최근 30일)",
+                "광고 전환 추이 (최근 30일)",
                 [ads_daily[d]["conversions"] for d in last_30_dates],
                 "전환",
                 "count",
+                ads_has_data,
             ),
             (
                 "ads_ctr_30d.png",
-                "Ads CTR 추이 (최근 30일)",
+                "광고 클릭률 추이 (최근 30일)",
                 [
                     safe_div(ads_daily[d]["clicks"], ads_daily[d]["impressions"]) * 100
                     for d in last_30_dates
                 ],
-                "CTR",
+                "클릭률",
                 "percent",
+                ads_has_data,
             ),
             (
                 "ads_cpc_30d.png",
-                "Ads CPC 추이 (최근 30일)",
+                "클릭당 비용 추이 (최근 30일)",
                 [
                     safe_div(ads_daily[d]["cost"], ads_daily[d]["clicks"])
                     for d in last_30_dates
                 ],
-                "CPC",
+                "클릭당 비용",
                 "currency",
+                ads_has_data,
             ),
         ]
 
-        for filename, title, values, y_label, value_type in chart_specs:
+        for filename, title, values, y_label, value_type, has_data in chart_specs:
             charts.append({
                 "filename": filename,
                 "title": title,
                 "values": values,
                 "y_label": y_label,
                 "value_type": value_type,
+                "has_data": has_data,
                 "dates": last_30_dates,
             })
         return charts
@@ -482,9 +496,41 @@ class ReportGenerator:
         output_dir.mkdir(parents=True, exist_ok=True)
         for chart in charts:
             path = output_dir / chart["filename"]
-            self._plot_chart(path, chart["dates"], chart["values"], chart["title"], chart["value_type"])
+            self._plot_chart(
+                path,
+                chart["dates"],
+                chart["values"],
+                chart["title"],
+                chart["value_type"],
+                chart["has_data"],
+            )
 
-    def _plot_chart(self, path: Path, dates: list[str], values: list[float], title: str, value_type: str):
+    def _plot_chart(
+        self,
+        path: Path,
+        dates: list[str],
+        values: list[float],
+        title: str,
+        value_type: str,
+        has_data: bool,
+    ):
+        if not has_data:
+            fig, ax = plt.subplots(figsize=(6.8, 3.2), dpi=150)
+            ax.axis("off")
+            ax.text(
+                0.5,
+                0.5,
+                "데이터 없음",
+                ha="center",
+                va="center",
+                fontsize=12,
+                color="#6b7280",
+            )
+            fig.tight_layout()
+            fig.savefig(path, bbox_inches="tight")
+            plt.close(fig)
+            return
+
         fig, ax = plt.subplots(figsize=(6.8, 3.2), dpi=150)
         ax.plot(dates, values, color=ACCENT_COLOR, linewidth=2)
         ax.fill_between(dates, values, color=ACCENT_COLOR, alpha=0.12)

@@ -4,11 +4,16 @@
 
 # outputs
 reports/
+/index.html
 
 # python
 .venv/
 __pycache__/
 *.pyc
+
+# assets
+assets/huelight-logo.png
+assets/huelight-logo.svg
 
 # os
 .DS_Store
