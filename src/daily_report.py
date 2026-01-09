@@ -2,6 +2,7 @@
 HueLight GA4/Google Ads 일일 리포트 생성기
 """
 
+import json
 import os
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -77,6 +78,12 @@ def iso_date_range(start: date, end: date) -> list[str]:
     return [(start + timedelta(days=offset)).isoformat() for offset in range(days)]
 
 
+def safe_date_range(start: date, end: date) -> list[str]:
+    if start > end:
+        return []
+    return iso_date_range(start, end)
+
+
 def parse_ga4_date(value: str) -> str:
     if len(value) == 8:
         return f"{value[:4]}-{value[4:6]}-{value[6:]}"
@@ -150,17 +157,41 @@ class ReportGenerator:
         all_dates = iso_date_range(start, end)
         last_30_start = max(start, end - timedelta(days=29))
         last_30_dates = iso_date_range(last_30_start, end)
+        last_7_end = end - timedelta(days=1)
+        last_7_start = max(start, last_7_end - timedelta(days=6))
+        last_7_dates = safe_date_range(last_7_start, last_7_end)
+        prev_7_end = last_7_start - timedelta(days=1)
+        prev_7_start = max(start, prev_7_end - timedelta(days=6))
+        prev_7_dates = safe_date_range(prev_7_start, prev_7_end) if last_7_dates else []
 
         ga4_daily, ga4_has_data = self._get_ga4_daily_series(self.start_date, self.end_date, all_dates)
         ads_daily, ads_has_data, has_conv_value = self._get_ads_daily_series(self.start_date, self.end_date, all_dates)
 
         summary = self._build_summary(ga4_daily, ads_daily, last_30_dates, all_dates, has_conv_value)
         tables = self._build_tables(last_30_start.isoformat(), self.end_date)
+        ai_summary = self._build_ai_summary(
+            ga4_daily,
+            ads_daily,
+            last_7_dates,
+            prev_7_dates,
+            tables.get("top_landing"),
+            tables.get("top_campaign"),
+        )
+        geo_map = self._get_geo_map(last_7_start, last_7_end) if last_7_dates else {
+            "has_data": False,
+            "chart_json": "[]",
+            "start": last_7_start.isoformat(),
+            "end": last_7_end.isoformat(),
+            "total_active": 0,
+            "total_active_display": format_int(0),
+        }
 
         return {
             "summary": summary,
             "tables": tables,
             "charts": self._build_chart_data(ga4_daily, ads_daily, last_30_dates, ga4_has_data, ads_has_data),
+            "ai_summary": ai_summary,
+            "geo_map": geo_map,
         }
 
     def _get_ga4_daily_series(self, start_date: str, end_date: str, all_dates: list[str]) -> tuple[dict, bool]:
@@ -339,6 +370,137 @@ class ReportGenerator:
             })
         return cards
 
+    def _build_ai_summary(
+        self,
+        ga4_daily: dict,
+        ads_daily: dict,
+        last_7_dates: list[str],
+        prev_7_dates: list[str],
+        top_landing: dict | None,
+        top_campaign: dict | None,
+    ) -> dict:
+        def sum_ga4(dates: list[str]) -> dict:
+            return {
+                "sessions": sum(ga4_daily[d]["sessions"] for d in dates) if dates else 0,
+                "active_users": sum(ga4_daily[d]["activeUsers"] for d in dates) if dates else 0,
+            }
+
+        def sum_ads(dates: list[str]) -> dict:
+            return {
+                "cost": sum(ads_daily[d]["cost"] for d in dates) if dates else 0.0,
+                "impressions": sum(ads_daily[d]["impressions"] for d in dates) if dates else 0,
+                "clicks": sum(ads_daily[d]["clicks"] for d in dates) if dates else 0,
+                "conversions": sum(ads_daily[d]["conversions"] for d in dates) if dates else 0.0,
+            }
+
+        def delta_pct(current: float, prev: float) -> float | None:
+            if prev <= 0:
+                return None
+            return (current - prev) / prev * 100
+
+        def trend_text(current: float, prev: float, unit: str = "", is_currency: bool = False) -> str:
+            if is_currency:
+                current_text = format_currency(current)
+            elif unit == "%":
+                current_text = f"{format_float(current, 2)}%"
+            else:
+                current_text = format_int(current)
+                if unit:
+                    current_text = f"{current_text}{unit}"
+            delta = delta_pct(current, prev)
+            if delta is None:
+                return f"{current_text} (비교 데이터 없음)"
+            direction = "증가" if delta >= 0 else "감소"
+            return f"{current_text} (전주 대비 {abs(delta):.1f}% {direction})"
+
+        last_7_ga4 = sum_ga4(last_7_dates)
+        prev_7_ga4 = sum_ga4(prev_7_dates)
+        last_7_ads = sum_ads(last_7_dates)
+        prev_7_ads = sum_ads(prev_7_dates)
+
+        last_ctr = safe_div(last_7_ads["clicks"], last_7_ads["impressions"]) * 100
+        prev_ctr = safe_div(prev_7_ads["clicks"], prev_7_ads["impressions"]) * 100
+        last_cpc = safe_div(last_7_ads["cost"], last_7_ads["clicks"])
+        prev_cpc = safe_div(prev_7_ads["cost"], prev_7_ads["clicks"])
+        last_cpa = safe_div(last_7_ads["cost"], last_7_ads["conversions"])
+        prev_cpa = safe_div(prev_7_ads["cost"], prev_7_ads["conversions"])
+
+        summary_parts = [
+            f"세션 {trend_text(last_7_ga4['sessions'], prev_7_ga4['sessions'], unit='회')}",
+            f"활성 사용자 {trend_text(last_7_ga4['active_users'], prev_7_ga4['active_users'], unit='명')}",
+            f"광고 비용 {trend_text(last_7_ads['cost'], prev_7_ads['cost'], is_currency=True)}",
+            f"전환 {trend_text(last_7_ads['conversions'], prev_7_ads['conversions'], unit='건')}",
+        ]
+        summary_text = (
+            f"최근 7일 기준 {', '.join(summary_parts)}입니다. "
+            "전주 대비 변화를 기준으로 핵심 지표를 요약했습니다."
+        )
+
+        landing_text = "데이터 없음"
+        if top_landing:
+            landing_text = f"{top_landing.get('landingPagePlusQueryString', '-')[:60]} (세션 {format_int(top_landing.get('sessions', 0))})"
+
+        campaign_text = "데이터 없음"
+        if top_campaign:
+            campaign_text = f"{top_campaign.get('campaign', '-')[:60]} (비용 {format_currency(top_campaign.get('cost', 0.0))})"
+
+        insights = [
+            f"세션/활성 사용자: {trend_text(last_7_ga4['sessions'], prev_7_ga4['sessions'], unit='회')} / "
+            f"{trend_text(last_7_ga4['active_users'], prev_7_ga4['active_users'], unit='명')}",
+            f"광고 효율: CTR {trend_text(last_ctr, prev_ctr, unit='%')}, "
+            f"CPC {trend_text(last_cpc, prev_cpc, is_currency=True)}, "
+            f"CPA {trend_text(last_cpa, prev_cpa, is_currency=True)}",
+            f"상위 성과: 랜딩페이지 {landing_text}, 캠페인 {campaign_text}",
+        ]
+
+        return {
+            "text": summary_text,
+            "insights": insights,
+        }
+
+    def _get_geo_map(self, start_date: date, end_date: date) -> dict:
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        if start_date > end_date:
+            return {
+                "has_data": False,
+                "chart_json": "[]",
+                "start": start,
+                "end": end,
+                "total_active": 0,
+                "total_active_display": format_int(0),
+            }
+        rows = self.ga4.run_report(
+            ["country"],
+            ["activeUsers", "sessions"],
+            start,
+            end,
+            limit=200,
+        )
+        data_rows = []
+        total_active = 0
+        for row in rows:
+            country = row.get("country", "")
+            active_users = row.get("activeUsers", 0)
+            try:
+                active_users = int(active_users)
+            except ValueError:
+                active_users = 0
+            if not country:
+                continue
+            total_active += active_users
+            data_rows.append([country, active_users])
+        data_rows.sort(key=lambda x: x[1], reverse=True)
+        chart_data = [["Country", "Active Users"]] + data_rows
+        return {
+            "has_data": bool(data_rows),
+            "chart_json": json.dumps(chart_data, ensure_ascii=False),
+            "start": start,
+            "end": end,
+            "total_active": total_active,
+            "total_active_display": format_int(total_active),
+        }
+
     def _build_tables(self, start_date: str, end_date: str) -> dict:
         landing_rows = self.ga4.run_report(
             ["landingPagePlusQueryString"],
@@ -349,6 +511,7 @@ class ReportGenerator:
         )
         landing_rows.sort(key=lambda x: x.get("sessions", 0), reverse=True)
         landing_rows = landing_rows[:10]
+        top_landing = landing_rows[0] if landing_rows else None
 
         source_rows = self.ga4.run_report(
             ["sessionSource", "sessionMedium"],
@@ -392,6 +555,7 @@ class ReportGenerator:
             campaign_list.append(campaign)
         campaign_list.sort(key=lambda x: x["cost"], reverse=True)
         campaign_list = campaign_list[:10]
+        top_campaign = campaign_list[0] if campaign_list else None
 
         return {
             "landing_pages": {
@@ -433,6 +597,8 @@ class ReportGenerator:
                     for row in campaign_list
                 ],
             },
+            "top_landing": top_landing,
+            "top_campaign": top_campaign,
         }
 
     def _build_chart_data(
@@ -586,7 +752,15 @@ class ReportGenerator:
         print(f"리포트 저장됨: {output_path}")
 
 
-def build_render_context(report_data: dict, chart_prefix: str, logo_png_path: str, logo_svg_path: str, start_date: str, end_date: str) -> dict:
+def build_render_context(
+    report_data: dict,
+    chart_prefix: str,
+    logo_png_path: str,
+    logo_svg_path: str,
+    logo_url: str | None,
+    start_date: str,
+    end_date: str,
+) -> dict:
     charts = []
     for chart in report_data["charts"]:
         charts.append({
@@ -603,6 +777,9 @@ def build_render_context(report_data: dict, chart_prefix: str, logo_png_path: st
         "charts": charts,
         "logo_png_path": logo_png_path,
         "logo_svg_path": logo_svg_path,
+        "logo_url": logo_url,
+        "ai_summary": report_data["ai_summary"],
+        "geo_map": report_data["geo_map"],
     }
 
 
@@ -610,6 +787,7 @@ def main():
     load_dotenv()
     property_id = os.getenv("PROPERTY_ID")
     customer_id = os.getenv("CUSTOMER_ID")
+    logo_url = os.getenv("LOGO_URL", "").strip() or None
     if not property_id or not customer_id:
         print("오류: PROPERTY_ID와 CUSTOMER_ID가 필요합니다.")
         return
@@ -629,6 +807,7 @@ def main():
         chart_prefix="",
         logo_png_path="../../assets/huelight-logo.png",
         logo_svg_path="../../assets/huelight-logo.svg",
+        logo_url=logo_url,
         start_date=start_date,
         end_date=end_date,
     )
@@ -639,6 +818,7 @@ def main():
         chart_prefix=f"reports/{end_date}/",
         logo_png_path="assets/huelight-logo.png",
         logo_svg_path="assets/huelight-logo.svg",
+        logo_url=logo_url,
         start_date=start_date,
         end_date=end_date,
     )
