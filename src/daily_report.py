@@ -18,6 +18,27 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+from matplotlib import font_manager
+
+
+def configure_korean_font():
+    preferred_fonts = [
+        "Apple SD Gothic Neo",
+        "AppleGothic",
+        "Noto Sans CJK KR",
+        "Noto Sans KR",
+        "NanumGothic",
+        "Malgun Gothic",
+        "DejaVu Sans",
+    ]
+    available = {font.name for font in font_manager.fontManager.ttflist}
+    chosen = next((name for name in preferred_fonts if name in available), None)
+    if chosen:
+        plt.rcParams["font.family"] = chosen
+    plt.rcParams["axes.unicode_minus"] = False
+
+
+configure_korean_font()
 
 GA4_SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]
 GA4_CREDENTIALS_PATH = ".secrets/ga4.json"
