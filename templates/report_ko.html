@@ -77,7 +77,7 @@
       box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
     }
     .section-title {
-      font-size: 18px;
+      font-size: 24px;
       font-weight: 700;
       margin-bottom: 18px;
       display: flex;
@@ -93,12 +93,12 @@
     }
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
       gap: 14px;
       margin-bottom: 18px;
     }
     .summary-grid.compact {
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
     }
     .kpi-card {
       border: 1px solid var(--line);
@@ -110,7 +110,7 @@
       padding: 12px;
     }
     .kpi-card.small .kpi-value {
-      font-size: 18px;
+      font-size: 20px;
     }
     .kpi-label {
       font-size: 12px;
@@ -118,7 +118,7 @@
       margin-bottom: 6px;
     }
     .kpi-value {
-      font-size: 22px;
+      font-size: 28px;
       font-weight: 700;
     }
     .kpi-sub {
@@ -154,7 +154,7 @@
     }
     .chart-card img {
       width: 100%;
-      height: 220px;
+      height: 320px;
       object-fit: contain;
       background: #fff;
       border-radius: 10px;
@@ -188,9 +188,25 @@
       margin-top: 10px;
     }
     .ai-summary {
-      font-size: 14px;
+      font-size: 16px;
       color: var(--ink);
       margin-bottom: 12px;
+    }
+    .fixed-sample {
+      font-size: 14px;
+      color: #7c2d12;
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+    }
+    .fixed-sample .sample-title {
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .fixed-sample .sample-title + div {
+      margin-bottom: 4px;
     }
     .ai-insights {
       list-style: none;
@@ -229,17 +245,48 @@
       font-size: 13px;
       color: var(--muted);
     }
+    .action-reason {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
     .geo-chart {
       width: 100%;
-      height: 380px;
+      height: 520px;
     }
     .chart-image {
       width: 100%;
-      height: 260px;
+      height: 360px;
       object-fit: contain;
       background: #fff;
       border-radius: 10px;
       border: 1px solid #eef2f7;
+    }
+    .chart-note {
+      font-size: 14px;
+      color: var(--muted);
+      background: #f9fafb;
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-top: 8px;
+    }
+    .chart-note strong {
+      color: var(--ink);
+    }
+    .chart-note ul {
+      margin: 6px 0 0 18px;
+    }
+    .kpi-summary {
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid var(--line);
+      font-size: 14px;
+      color: var(--muted);
+    }
+    .geo-chart.small {
+      height: 320px;
     }
     .empty-state {
       padding: 20px;
@@ -248,6 +295,16 @@
       color: var(--muted);
       background: #f9fafb;
       font-size: 13px;
+    }
+    .final-conclusion {
+      background: #111827;
+      color: #f9fafb;
+      padding: 18px;
+      border-radius: 14px;
+    }
+    .final-conclusion ul {
+      margin: 0;
+      padding-left: 18px;
     }
     .glossary {
       display: grid;
@@ -271,7 +328,8 @@
     @media (max-width: 720px) {
       .header { flex-direction: column; align-items: flex-start; }
       .meta { text-align: left; }
-      .chart-card img { height: 200px; }
+      .chart-card img { height: 240px; }
+      .chart-image { height: 260px; }
     }
   </style>
 </head>
@@ -300,16 +358,25 @@
     </header>
     <section class="section">
       <div class="section-title">오늘 한 줄 결론</div>
+      <div class="fixed-sample">{{ fixed_top_sample.today_line }}</div>
       <div class="ai-summary">{{ today_line }}</div>
     </section>
 
     <section class="section">
       <div class="section-title">오늘 할 일 3개</div>
+      <div class="fixed-sample">
+        {% for card in fixed_top_sample.action_cards %}
+        <div class="sample-title">{{ card.title }}</div>
+        <div>{{ card.desc }}</div>
+        <div class="action-reason">{{ card.reason }}</div>
+        {% endfor %}
+      </div>
       <div class="action-grid">
         {% for card in action_cards %}
         <div class="action-card">
           <div class="action-title">{{ card.title }}</div>
           <div class="action-desc">{{ card.desc }}</div>
+          <div class="action-reason">{{ card.reason }}</div>
         </div>
         {% endfor %}
       </div>
@@ -319,9 +386,17 @@
       <div class="section-title">어디서 들어왔나</div>
       {% if geo_map.has_data %}
       <div id="geo-chart" class="geo-chart"></div>
+      <div class="chart-note">
+        <strong>의미:</strong> 최근 7일 국가별 활성 사용자 분포입니다.<br>
+        <strong>해석:</strong> 상위 국가가 편중되면 해당 국가용 메시지/랜딩을 강화하세요.
+      </div>
       {% if extra_charts.countries_top10 %}
       <div class="chart-title">국가별 상위 10</div>
       <img class="chart-image" src="{{ extra_charts.countries_top10 }}" alt="국가별 상위 10" onerror="this.style.display='none'">
+      <div class="chart-note">
+        <strong>의미:</strong> 활성 사용자가 많은 국가 상위 10입니다.<br>
+        <strong>해석:</strong> 상위 국가는 예산 집중, 하위 국가는 메시지 테스트 후보입니다.
+      </div>
       {% endif %}
       {% if geo_map.top10 %}
       <div class="table-wrap">
@@ -351,7 +426,7 @@
 
     <section class="section">
       <div class="section-title">핵심 지표</div>
-      <div class="chart-title">어제(확정) {{ summary.yesterday_date }}</div>
+      <div class="chart-title">어제(확정) 핵심 지표 · {{ summary.yesterday_date }}</div>
       <div class="summary-grid">
         {% for card in summary.yesterday_cards %}
         <div class="kpi-card">
@@ -362,7 +437,7 @@
         {% endfor %}
       </div>
       <div class="divider"></div>
-      <div class="chart-title">오늘(부분집계)</div>
+      <div class="chart-title">오늘(부분집계, 현재까지)</div>
       <div class="summary-grid compact">
         {% for card in summary.today_cards %}
         <div class="kpi-card small">
@@ -394,14 +469,26 @@
         </div>
         {% endfor %}
       </div>
+      <div class="kpi-summary">
+        {% for line in kpi_summary_lines %}
+        <div>• {{ line }}</div>
+        {% endfor %}
+      </div>
     </section>
 
     <section class="section">
       <div class="section-title">이번 주 한 장 요약</div>
       {% if extra_charts.week_scoreboard %}
       <img class="chart-image" src="{{ extra_charts.week_scoreboard }}" alt="이번 주 한 장 요약" onerror="this.style.display='none'">
-      {% else %}
-      <div class="empty-state">이번 주 비교 데이터가 없습니다.</div>
+      <div class="chart-note">
+        <strong>의미:</strong> 지난 7일이 전주 대비 얼마나 좋아졌는지 한 장으로 보여줍니다.<br>
+        <strong>해석:</strong>
+        <ul>
+          {% for line in weekly_notes %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+      </div>
       {% endif %}
     </section>
 
@@ -409,7 +496,16 @@
       <div class="section-title">돈 샌 곳(전환 0)</div>
       <div class="ai-summary">
         전환 0 비용 합계 {{ wasted_summary.wasted_cost_display }} / 전체 {{ wasted_summary.total_cost_display }}
-        <span class="note">Top 3 합계 {{ wasted_summary.top_sum_display }}</span>
+        <span class="note">비중 {{ wasted_summary.wasted_share_display }} · Top 3 합계 {{ wasted_summary.top_sum_display }}</span>
+      </div>
+      <div class="chart-note">
+        <strong>의미:</strong>
+        <ul>
+          {% for line in waste_notes %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+        <strong>해석:</strong> 전환 0 비용이 크면 Pause/네거티브/랜딩 수정이 우선입니다.
       </div>
       {% if extra_charts.waste_keywords_top10 or extra_charts.waste_queries_top10 %}
       <div class="chart-grid">
@@ -426,9 +522,15 @@
         </div>
         {% endif %}
       </div>
-      {% else %}
-      <div class="empty-state">낭비 차트 데이터가 없습니다.</div>
       {% endif %}
+      <div class="chart-note">
+        <strong>권장 조치:</strong>
+        <ul>
+          {% for line in waste_actions %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+      </div>
       <div class="divider"></div>
       <div class="chart-title">광고비만 나간 키워드 TOP</div>
       {% if keyword_tables.last_7.wasted.rows %}
@@ -484,7 +586,21 @@
     </section>
 
     <section class="section">
-      <div class="section-title">돈 더 써도 되는 곳</div>
+      <div class="section-title">효율 좋은 키워드(전환 있는 것)</div>
+      <div class="chart-note">
+        <strong>의미:</strong>
+        <ul>
+          {% for line in growth_notes %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+        <strong>해석:</strong> 전환이 있는 키워드는 예산을 줄이지 말고 확대 후보로 봅니다.
+        <strong>읽는 법:</strong>
+        <ul>
+          <li>CPA 낮을수록 효율이 좋습니다.</li>
+          <li>전환 수가 너무 적으면 과대평가될 수 있습니다.</li>
+        </ul>
+      </div>
       <div class="chart-grid">
         {% if extra_charts.growth_keywords_cpa_top10 %}
         <div class="chart-card">
@@ -505,21 +621,29 @@
         </div>
         {% endif %}
       </div>
-      {% if not extra_charts.growth_keywords_cpa_top10 and not extra_charts.growth_landing_cpa_top10 and not extra_charts.device_cpa_compare %}
-      <div class="empty-state">성장 후보 데이터가 없습니다.</div>
-      {% endif %}
     </section>
 
     <section class="section">
       <div class="section-title">왜 이런지 빠르게 보기</div>
       {% if extra_charts.weekday_conversions %}
       <img class="chart-image" src="{{ extra_charts.weekday_conversions }}" alt="요일별 전환" onerror="this.style.display='none'">
-      {% else %}
-      <div class="empty-state">요일별 전환 데이터가 없습니다.</div>
+      <div class="chart-note">
+        <strong>의미:</strong>
+        <ul>
+          {% for line in diagnostic_notes %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+        <strong>해석:</strong> 전환이 높은 요일/시간에 예산을 집중하세요.
+      </div>
       {% endif %}
       {% if extra_charts.hour_weekday_heatmap %}
       <div class="divider"></div>
       <img class="chart-image" src="{{ extra_charts.hour_weekday_heatmap }}" alt="시간대별 전환" onerror="this.style.display='none'">
+      <div class="chart-note">
+        <strong>의미:</strong> 요일 x 시간대별 전환 분포입니다.<br>
+        <strong>해석:</strong> 전환이 몰리는 시간대에 예산/입찰을 집중하세요.
+      </div>
       {% endif %}
     </section>
 
@@ -528,6 +652,10 @@
       <details>
         <summary>일별 추이(최근 30일)</summary>
         {% if charts %}
+        <div class="chart-note">
+          <strong>의미:</strong> 최근 30일 핵심 지표 흐름입니다.<br>
+          <strong>해석:</strong> 급격한 변화가 있는 날은 캠페인/랜딩 변경 여부를 확인하세요.
+        </div>
         <div class="chart-grid">
           {% for chart in charts %}
           <div class="chart-card">
@@ -536,8 +664,6 @@
           </div>
           {% endfor %}
         </div>
-        {% else %}
-        <div class="empty-state">추이 그래프 데이터가 없습니다.</div>
         {% endif %}
       </details>
       <details open>
@@ -590,6 +716,15 @@
             </div>
           </div>
         </div>
+        {% if geo_map.has_data %}
+        <div class="divider"></div>
+        <div class="chart-title">국가 지도(작게)</div>
+        <div id="geo-chart-mini" class="geo-chart small"></div>
+        {% if extra_charts.countries_top10 %}
+        <div class="chart-title">국가별 상위 10(재확인)</div>
+        <img class="chart-image" src="{{ extra_charts.countries_top10 }}" alt="국가별 상위 10(재확인)" onerror="this.style.display='none'">
+        {% endif %}
+        {% endif %}
       </details>
       <details>
         <summary>광고 캠페인 상세</summary>
@@ -665,6 +800,17 @@
     <div class="footer-space"></div>
 
     <section class="section">
+      <div class="section-title">결론(대표님용)</div>
+      <div class="final-conclusion">
+        <ul>
+          {% for line in final_conclusion %}
+          <li>{{ line }}</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+
+    <section class="section">
       <div class="section-title">지표/전환 정의</div>
       <div class="glossary">
         <div>세션: 사용자가 사이트에 방문해 활동한 한 번의 방문 묶음입니다.</div>
@@ -690,6 +836,11 @@
       };
       var chart = new google.visualization.GeoChart(document.getElementById("geo-chart"));
       chart.draw(data, options);
+      var mini = document.getElementById("geo-chart-mini");
+      if (mini) {
+        var miniChart = new google.visualization.GeoChart(mini);
+        miniChart.draw(data, options);
+      }
     }
   </script>
   {% endif %}

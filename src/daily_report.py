@@ -4,7 +4,9 @@ HueLight GA4/Google Ads 일일 리포트 생성기
 
 import json
 import os
+import shutil
 import sys
+import textwrap
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -59,6 +61,13 @@ REPORT_TITLE = "HueLight 퍼포먼스 대시보드"
 FIXED_START_DATE = "2025-03-18"
 TIMEZONE = "Asia/Seoul"
 ACCENT_COLOR = "#2563eb"
+CHART_DPI = 200
+CHART_FIGSIZE = (12, 6)
+CHART_FIGSIZE_WIDE = (14, 7)
+CHART_TITLE_SIZE = 20
+CHART_LABEL_SIZE = 15
+CHART_TICK_SIZE = 13
+CHART_ANNOT_SIZE = 13
 
 
 def seoul_today() -> date:
@@ -81,6 +90,10 @@ def format_float(value: float, digits: int = 2) -> str:
 
 def format_currency(value: float) -> str:
     return f"₩{value:,.0f}"
+
+
+def format_percent(value: float, digits: int = 0) -> str:
+    return f"{value:,.{digits}f}%"
 
 
 def format_delta(current: float, previous: float) -> str | None:
@@ -227,6 +240,17 @@ class ReportGenerator:
         keyword_tables = self._get_ads_keyword_tables(last_7_start, last_7_end, last_30_complete_start, last_30_end)
         search_terms = self._get_ads_search_term_waste(last_7_start, last_7_end)
         wasted_summary = self._build_wasted_summary(last_7_dates, ads_daily, keyword_tables, search_terms)
+        prev_keyword_tables = {"last_7": {"rows": []}}
+        prev_search_terms = {"start": prev_7_start.isoformat(), "end": prev_7_end.isoformat(), "rows": []}
+        prev_wasted_summary = None
+        if prev_7_dates:
+            prev_keyword_tables = {
+                "last_7": {
+                    "rows": self._get_ads_keyword_rows(prev_7_start, prev_7_end),
+                }
+            }
+            prev_search_terms = self._get_ads_search_term_waste(prev_7_start, prev_7_end)
+            prev_wasted_summary = self._build_wasted_summary(prev_7_dates, ads_daily, prev_keyword_tables, prev_search_terms)
         conversion_definitions = self._get_conversion_definitions(last_30_complete_start, last_30_end)
         landing_page_stats = self._get_ads_landing_page_stats(last_7_start, last_7_end)
         device_stats = self._get_device_stats(last_7_start, last_7_end)
@@ -234,6 +258,7 @@ class ReportGenerator:
         heatmap_stats = self._get_hour_weekday_heatmap(last_7_start, last_7_end)
         today_line = self._build_today_line(self.end_date, ads_daily, wasted_summary)
         action_cards = self._build_action_cards(keyword_tables, search_terms)
+        fixed_top_sample = self._build_fixed_top_sample()
         exec_summary = self._build_executive_summary(
             last_7_dates,
             prev_7_dates,
@@ -243,6 +268,28 @@ class ReportGenerator:
             keyword_tables,
             search_terms,
         )
+        kpi_summary_lines = self._build_kpi_summary_lines(
+            last_7_dates,
+            prev_7_dates,
+            ga4_daily,
+            ads_daily,
+            wasted_summary,
+            prev_wasted_summary,
+        )
+        weekly_notes = self._build_weekly_notes(
+            last_7_dates,
+            prev_7_dates,
+            ga4_daily,
+            ads_daily,
+            wasted_summary,
+            keyword_tables,
+            search_terms,
+        )
+        waste_notes = self._build_waste_notes(wasted_summary)
+        waste_actions = self._build_waste_actions(action_cards, tables)
+        growth_notes = self._build_growth_notes(keyword_tables)
+        diagnostic_notes = self._build_diagnostic_notes(weekday_stats)
+        final_conclusion = self._build_final_conclusion(exec_summary, action_cards)
         extra_chart_specs = self._build_extra_chart_specs(
             ga4_daily,
             ads_daily,
@@ -270,6 +317,14 @@ class ReportGenerator:
             "exec_summary": exec_summary,
             "today_line": today_line,
             "action_cards": action_cards,
+            "fixed_top_sample": fixed_top_sample,
+            "kpi_summary_lines": kpi_summary_lines,
+            "weekly_notes": weekly_notes,
+            "waste_notes": waste_notes,
+            "waste_actions": waste_actions,
+            "growth_notes": growth_notes,
+            "diagnostic_notes": diagnostic_notes,
+            "final_conclusion": final_conclusion,
             "landing_page_stats": landing_page_stats,
             "device_stats": device_stats,
             "weekday_stats": weekday_stats,
@@ -758,6 +813,10 @@ class ReportGenerator:
             return value
         return f"{value[:limit]}…"
 
+    def _wrap_label(self, value: str, width: int = 12, limit: int = 28) -> str:
+        text = self._short_label(value, limit=limit)
+        return "\n".join(textwrap.wrap(text, width=width)) if len(text) > width else text
+
     def _format_keyword_table(self, rows: list[dict]) -> dict:
         headers = [
             "캠페인",
@@ -1041,11 +1100,13 @@ class ReportGenerator:
             self._short_label(item.get("term") or item.get("keyword") or "낭비 항목")
             for item in wasted_items[:3]
         ) or "없음"
+        pause_reason = "전환 0인데 비용이 상위권이라 우선 중지 후보"
 
         negative_candidates = ", ".join(
             self._short_label(item.get("term") or "")
             for item in search_terms["rows"][:3]
         ) or "데이터 없음"
+        negative_reason = "실제 검색어가 의도와 맞지 않아 손해 가능성"
 
         best_keywords = []
         for row in keyword_tables["last_7"]["rows"]:
@@ -1058,11 +1119,194 @@ class ReportGenerator:
             f"{self._short_label(name)}({format_currency(cpa)})"
             for name, cpa in best_keywords[:3]
         ) or "데이터 없음"
+        budget_reason = "전환이 나오고 전환당 비용이 낮아 확대 후보"
 
         return [
-            {"title": "Pause 후보", "desc": pause_candidates},
-            {"title": "네거티브 후보", "desc": negative_candidates},
-            {"title": "예산 강화 후보", "desc": budget_candidates},
+            {"title": "Pause 후보", "desc": pause_candidates, "reason": pause_reason},
+            {"title": "네거티브 후보", "desc": negative_candidates, "reason": negative_reason},
+            {"title": "예산 강화 후보", "desc": budget_candidates, "reason": budget_reason},
+        ]
+
+    def _build_fixed_top_sample(self) -> dict:
+        return {
+            "today_line": "오늘 광고는 전환 3.0건, 비용 ₩118,158, 낭비 키워드 red light therapy be…가 큼.",
+            "action_cards": [
+                {
+                    "title": "Pause 후보",
+                    "desc": "hydrogen bath, hydrogen bath genera…, hydrogen nano bath",
+                    "reason": "전환 0인데 비용이 상위권이라 우선 중지 후보",
+                },
+                {
+                    "title": "네거티브 후보",
+                    "desc": "hydrogen bath, hydrogen bath genera…, hydrogen nano bath",
+                    "reason": "실제 검색어가 의도와 맞지 않아 손해 가능성",
+                },
+                {
+                    "title": "예산 강화 후보",
+                    "desc": "hydrogen bath(₩7,786), whole body red light…(₩24,094), molecular hydrogen i…(₩67,273)",
+                    "reason": "전환이 나오고 전환당 비용이 낮아 확대 후보",
+                },
+            ],
+        }
+
+    def _select_best_keywords(self, keyword_rows: list[dict], limit: int = 3) -> list[tuple[str, float]]:
+        candidates = []
+        for row in keyword_rows:
+            if row["conversions"] > 0:
+                cost = row["cost_micros"] / 1_000_000
+                cpa = safe_div(cost, row["conversions"])
+                candidates.append((row["keyword"], cpa))
+        candidates.sort(key=lambda x: x[1])
+        return candidates[:limit]
+
+    def _build_kpi_summary_lines(
+        self,
+        last_7_dates: list[str],
+        prev_7_dates: list[str],
+        ga4_daily: dict,
+        ads_daily: dict,
+        wasted_summary: dict,
+        prev_wasted_summary: dict | None,
+    ) -> list[str]:
+        if not last_7_dates or not prev_7_dates:
+            return [
+                "전환/CPA 비교 데이터가 부족합니다.",
+                "비용 비교 데이터가 부족합니다.",
+                "낭비(전환 0) 비교 데이터가 부족합니다.",
+            ]
+
+        last_cost = sum(ads_daily[d]["cost"] for d in last_7_dates)
+        prev_cost = sum(ads_daily[d]["cost"] for d in prev_7_dates)
+        last_conv = sum(ads_daily[d]["conversions"] for d in last_7_dates)
+        prev_conv = sum(ads_daily[d]["conversions"] for d in prev_7_dates)
+        last_cpa = safe_div(last_cost, last_conv)
+        prev_cpa = safe_div(prev_cost, prev_conv)
+
+        conv_trend = "늘었" if last_conv >= prev_conv else "줄었"
+        cpa_trend = "좋아졌습니다" if last_cpa <= prev_cpa else "나빠졌습니다"
+        line1 = (
+            f"전환은 지난주보다 {conv_trend}고 "
+            f"CPA는 {cpa_trend} ({format_delta(last_cpa, prev_cpa) or 'n/a'})."
+        )
+
+        cost_trend = "늘었습니다" if last_cost >= prev_cost else "줄었습니다"
+        line2 = f"비용은 지난주보다 {cost_trend} ({format_delta(last_cost, prev_cost) or 'n/a'})."
+
+        if prev_wasted_summary:
+            prev_share = prev_wasted_summary.get("wasted_share", 0.0)
+            curr_share = wasted_summary.get("wasted_share", 0.0)
+            waste_trend = "커졌습니다" if curr_share >= prev_share else "줄었습니다"
+            line3 = (
+                f"낭비(전환 0) 비중은 {format_percent(curr_share, 1)}로 "
+                f"지난주 대비 {waste_trend}."
+            )
+        else:
+            line3 = f"낭비(전환 0) 비중은 {wasted_summary['wasted_share_display']}입니다."
+
+        return [line1, line2, line3]
+
+    def _build_weekly_notes(
+        self,
+        last_7_dates: list[str],
+        prev_7_dates: list[str],
+        ga4_daily: dict,
+        ads_daily: dict,
+        wasted_summary: dict,
+        keyword_tables: dict,
+        search_terms: dict,
+    ) -> list[str]:
+        if not last_7_dates or not prev_7_dates:
+            return ["비교 데이터가 부족해 이번 주 해석을 만들 수 없습니다."]
+
+        last_sessions = sum(ga4_daily[d]["sessions"] for d in last_7_dates)
+        prev_sessions = sum(ga4_daily[d]["sessions"] for d in prev_7_dates)
+        last_active = sum(ga4_daily[d]["activeUsers"] for d in last_7_dates)
+        prev_active = sum(ga4_daily[d]["activeUsers"] for d in prev_7_dates)
+        last_cost = sum(ads_daily[d]["cost"] for d in last_7_dates)
+        prev_cost = sum(ads_daily[d]["cost"] for d in prev_7_dates)
+        last_conv = sum(ads_daily[d]["conversions"] for d in last_7_dates)
+        prev_conv = sum(ads_daily[d]["conversions"] for d in prev_7_dates)
+        last_cpa = safe_div(last_cost, last_conv)
+        prev_cpa = safe_div(prev_cost, prev_conv)
+
+        top_waste = wasted_summary["top_items"][0] if wasted_summary["top_items"] else "낭비 항목 없음"
+        best_keyword = self._select_best_keywords(keyword_tables["last_7"]["rows"], limit=1)
+        best_text = self._short_label(best_keyword[0][0]) if best_keyword else "데이터 없음"
+        pause_items = []
+        wasted_items = search_terms["rows"] if search_terms["rows"] else [
+            row for row in keyword_tables["last_7"]["rows"]
+            if row["conversions"] == 0 and row["cost_micros"] > 0
+        ]
+        for item in wasted_items[:2]:
+            label = item.get("term") or item.get("keyword") or "낭비 항목"
+            pause_items.append(self._short_label(label))
+        pause_text = ", ".join(pause_items) if pause_items else "없음"
+
+        return [
+            f"세션은 {format_delta(last_sessions, prev_sessions) or 'n/a'}, 활성 사용자는 {format_delta(last_active, prev_active) or 'n/a'} 변화했습니다.",
+            f"광고비는 {format_delta(last_cost, prev_cost) or 'n/a'}, 전환은 {format_delta(last_conv, prev_conv) or 'n/a'}입니다.",
+            f"CPA는 {format_delta(last_cpa, prev_cpa) or 'n/a'}로 {'좋아짐' if last_cpa <= prev_cpa else '나빠짐'}.",
+            f"가장 큰 리스크: 전환 0 비용 상위 항목은 {top_waste}입니다.",
+            f"좋은 신호: 전환당 비용이 낮은 키워드는 {best_text}입니다.",
+            f"이번 주 실행: Pause 후보 {pause_text}부터 정리하세요.",
+        ]
+
+    def _build_waste_notes(self, wasted_summary: dict) -> list[str]:
+        top_item = wasted_summary["top_items"][0] if wasted_summary["top_items"] else "낭비 항목 없음"
+        return [
+            "전환 0인데 비용이 큰 키워드/검색어가 많아 낭비로 분류됩니다.",
+            "클릭률은 괜찮은데 전환이 0이면 랜딩/의도 불일치 가능성이 큽니다.",
+            f"특히 {top_item}가 비용 상위입니다.",
+        ]
+
+    def _build_waste_actions(self, action_cards: list[dict], tables: dict) -> list[str]:
+        pause = action_cards[0]["desc"] if action_cards else "없음"
+        negative = action_cards[1]["desc"] if len(action_cards) > 1 else "없음"
+        landing = "데이터 없음"
+        landing_rows = tables.get("landing_pages", {}).get("rows", [])
+        if landing_rows:
+            landing = landing_rows[0][0]
+        return [
+            f"Pause 후보: {pause}",
+            f"네거티브 후보: {negative}",
+            f"랜딩 수정 후보: {landing}",
+        ]
+
+    def _build_growth_notes(self, keyword_tables: dict) -> list[str]:
+        best_keywords = self._select_best_keywords(keyword_tables["last_7"]["rows"], limit=3)
+        best_text = ", ".join(
+            f"{self._short_label(name)}({format_currency(cpa)})" for name, cpa in best_keywords
+        ) or "데이터 없음"
+        return [
+            "전환이 1건 이상인 키워드 중 CPA가 낮은 TOP10입니다.",
+            f"같은 돈으로 전환을 더 만들 가능성이 있어 예산 확대 후보: {best_text}",
+            "선정 조건: 최근 7일 전환 1건 이상.",
+        ]
+
+    def _build_diagnostic_notes(self, weekday_stats: list[dict]) -> list[str]:
+        if not weekday_stats:
+            return ["진단 데이터가 없습니다."]
+        top_day = max(weekday_stats, key=lambda r: r["conversions"])
+        return [
+            f"전환이 가장 높은 요일은 {top_day['weekday']}입니다.",
+            "요일/시간 분포를 보고 광고 노출 시간대를 조정하세요.",
+        ]
+
+    def _build_final_conclusion(
+        self,
+        exec_summary: dict,
+        action_cards: list[dict],
+    ) -> list[str]:
+        pause = action_cards[0]["desc"] if action_cards else "없음"
+        negative = action_cards[1]["desc"] if len(action_cards) > 1 else "없음"
+        growth = action_cards[2]["desc"] if len(action_cards) > 2 else "없음"
+        return [
+            exec_summary["lines"][0] if exec_summary["lines"] else "이번 주 요약을 만들 수 없습니다.",
+            exec_summary["lines"][1] if len(exec_summary["lines"]) > 1 else "낭비 경고 데이터를 확인하세요.",
+            f"오늘 당장 Pause 후보: {pause}",
+            f"오늘 당장 네거티브 후보: {negative}",
+            f"예산 강화 후보: {growth}",
+            "다음 리포트까지 전환/CPA 추이를 계속 관찰하세요.",
         ]
 
     def _build_wasted_summary(self, last_7_dates: list[str], ads_daily: dict, keyword_tables: dict, search_terms: dict) -> dict:
@@ -1325,10 +1569,11 @@ class ReportGenerator:
                 "labels": ["세션", "활성", "비용", "전환", "전환당 비용"],
                 "values": deltas,
                 "has_data": True,
+                "value_format": "percent",
             }
 
         if geo_map.get("top10"):
-            labels = [row["country"] for row in geo_map["top10"]]
+            labels = [self._wrap_label(row["country"], width=6, limit=14) for row in geo_map["top10"]]
             values = [row["active"] for row in geo_map["top10"]]
             specs["countries_top10"] = {
                 "type": "bar",
@@ -1336,6 +1581,7 @@ class ReportGenerator:
                 "labels": labels,
                 "values": values,
                 "has_data": True,
+                "value_format": "number",
             }
 
         wasted_keywords = [
@@ -1350,6 +1596,7 @@ class ReportGenerator:
                 "labels": [self._short_label(row["keyword"]) for row in wasted_keywords],
                 "values": [row["cost_micros"] / 1_000_000 for row in wasted_keywords],
                 "has_data": True,
+                "value_format": "currency",
             }
 
         wasted_queries = sorted(search_terms["rows"], key=lambda r: r["cost_micros"], reverse=True)[:10]
@@ -1360,6 +1607,7 @@ class ReportGenerator:
                 "labels": [self._short_label(row["term"]) for row in wasted_queries],
                 "values": [row["cost_micros"] / 1_000_000 for row in wasted_queries],
                 "has_data": True,
+                "value_format": "currency",
             }
 
         best_keywords = []
@@ -1377,6 +1625,7 @@ class ReportGenerator:
                 "labels": [self._short_label(row[0]) for row in top],
                 "values": [row[1] for row in top],
                 "has_data": True,
+                "value_format": "currency",
             }
 
         landing_rows = [
@@ -1393,6 +1642,8 @@ class ReportGenerator:
                 "values_left": [row["conversions"] for row in top],
                 "values_right": [row["cost_micros"] / 1_000_000 / row["conversions"] for row in top],
                 "has_data": True,
+                "left_format": "number",
+                "right_format": "currency",
             }
 
         if device_stats:
@@ -1416,6 +1667,8 @@ class ReportGenerator:
                 "values_left": conversions,
                 "values_right": cpa,
                 "has_data": True,
+                "left_format": "number",
+                "right_format": "currency",
             }
 
         if weekday_stats:
@@ -1427,6 +1680,7 @@ class ReportGenerator:
                 "labels": weekday_order,
                 "values": [values_map.get(day, 0) for day in weekday_order],
                 "has_data": True,
+                "value_format": "number",
             }
 
         if heatmap_stats.get("matrix"):
@@ -1636,6 +1890,13 @@ class ReportGenerator:
                 chart["has_data"],
             )
 
+    def _format_chart_value(self, value: float, value_format: str) -> str:
+        if value_format == "currency":
+            return format_currency(value)
+        if value_format == "percent":
+            return format_percent(value, 0)
+        return format_int(value)
+
     def _plot_chart(
         self,
         path: Path,
@@ -1645,13 +1906,13 @@ class ReportGenerator:
         value_type: str,
         has_data: bool,
     ):
-        fig, ax = plt.subplots(figsize=(6.8, 3.2), dpi=150)
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE, dpi=CHART_DPI)
         ax.plot(dates, values, color=ACCENT_COLOR, linewidth=2)
         ax.fill_between(dates, values, color=ACCENT_COLOR, alpha=0.12)
-        ax.set_title(title, fontsize=11, loc="left", pad=10)
-        ax.grid(axis="y", color="#e5e7eb", linewidth=0.8)
-        ax.tick_params(axis="x", labelrotation=45, labelsize=8)
-        ax.tick_params(axis="y", labelsize=8)
+        ax.set_title(title, fontsize=CHART_TITLE_SIZE, loc="left", pad=12)
+        ax.grid(axis="y", color="#e5e7eb", linewidth=0.6, alpha=0.8)
+        ax.tick_params(axis="x", labelrotation=45, labelsize=CHART_TICK_SIZE)
+        ax.tick_params(axis="y", labelsize=CHART_TICK_SIZE)
 
         tick_step = max(1, len(dates) // 6)
         ax.set_xticks(dates[::tick_step])
@@ -1667,16 +1928,73 @@ class ReportGenerator:
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
 
-    def _plot_bar_chart(self, path: Path, labels: list[str], values: list[float], title: str, horizontal: bool = False):
-        fig, ax = plt.subplots(figsize=(7.2, 3.8), dpi=150)
+    def _plot_bar_chart(
+        self,
+        path: Path,
+        labels: list[str],
+        values: list[float],
+        title: str,
+        horizontal: bool = False,
+        value_format: str = "number",
+    ):
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE_WIDE if horizontal else CHART_FIGSIZE, dpi=CHART_DPI)
         if horizontal:
-            ax.barh(labels, values)
+            bars = ax.barh(labels, values, color=ACCENT_COLOR, alpha=0.85)
             ax.invert_yaxis()
+            ax.xaxis.set_major_formatter(FuncFormatter(lambda x, _: self._format_chart_value(x, value_format)))
+            ax.grid(axis="x", color="#e5e7eb", linewidth=0.6, alpha=0.8)
+            if values:
+                min_val = min(values)
+                max_val = max(values)
+                if min_val < 0:
+                    ax.set_xlim(min_val * 1.15, max_val * 1.15 if max_val > 0 else max_val * 0.85)
+                elif max_val > 0:
+                    ax.set_xlim(0, max_val * 1.15)
         else:
-            ax.bar(labels, values)
-        ax.set_title(title, fontsize=13, loc="left", pad=8)
-        ax.tick_params(axis="x", labelrotation=20, labelsize=9)
-        ax.tick_params(axis="y", labelsize=9)
+            bars = ax.bar(labels, values, color=ACCENT_COLOR, alpha=0.85)
+            ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: self._format_chart_value(x, value_format)))
+            ax.grid(axis="y", color="#e5e7eb", linewidth=0.6, alpha=0.8)
+            if values:
+                min_val = min(values)
+                max_val = max(values)
+                if min_val < 0:
+                    ax.set_ylim(min_val * 1.15, max_val * 1.15 if max_val > 0 else max_val * 0.85)
+                elif max_val > 0:
+                    ax.set_ylim(0, max_val * 1.15)
+        ax.set_title(title, fontsize=CHART_TITLE_SIZE, loc="left", pad=12)
+        ax.tick_params(axis="x", labelrotation=20, labelsize=CHART_TICK_SIZE)
+        ax.tick_params(axis="y", labelsize=CHART_TICK_SIZE)
+
+        max_labels = 12
+        indexes = list(range(len(values)))
+        if len(values) > max_labels:
+            indexes = sorted(indexes, key=lambda i: values[i], reverse=True)[:max_labels]
+        for idx in indexes:
+            bar = bars[idx]
+            value = values[idx]
+            label = self._format_chart_value(value, value_format)
+            if horizontal:
+                align = "left" if value >= 0 else "right"
+                offset = 0.0 if value >= 0 else -0.02 * abs(value)
+                ax.text(
+                    bar.get_width() + offset,
+                    bar.get_y() + bar.get_height() / 2,
+                    f" {label}" if value >= 0 else f"{label} ",
+                    va="center",
+                    ha=align,
+                    fontsize=CHART_ANNOT_SIZE,
+                )
+            else:
+                y = bar.get_height()
+                va = "bottom" if value >= 0 else "top"
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    y,
+                    label,
+                    va=va,
+                    ha="center",
+                    fontsize=CHART_ANNOT_SIZE,
+                )
         fig.tight_layout()
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
@@ -1690,31 +2008,52 @@ class ReportGenerator:
         title: str,
         left_label: str,
         right_label: str,
+        left_format: str = "number",
+        right_format: str = "currency",
     ):
-        fig, axes = plt.subplots(1, 2, figsize=(9.2, 3.8), dpi=150)
-        axes[0].barh(labels, values_left)
+        fig, axes = plt.subplots(1, 2, figsize=CHART_FIGSIZE_WIDE, dpi=CHART_DPI)
+        bars_left = axes[0].barh(labels, values_left, color=ACCENT_COLOR, alpha=0.85)
         axes[0].invert_yaxis()
-        axes[0].set_title(left_label, fontsize=12, loc="left")
-        axes[0].tick_params(axis="y", labelsize=8)
-        axes[0].tick_params(axis="x", labelsize=8)
-        axes[1].barh(labels, values_right)
+        axes[0].set_title(left_label, fontsize=CHART_LABEL_SIZE, loc="left")
+        axes[0].tick_params(axis="y", labelsize=CHART_TICK_SIZE)
+        axes[0].tick_params(axis="x", labelsize=CHART_TICK_SIZE)
+        axes[0].xaxis.set_major_formatter(FuncFormatter(lambda x, _: self._format_chart_value(x, left_format)))
+        axes[0].grid(axis="x", color="#e5e7eb", linewidth=0.6, alpha=0.8)
+        bars_right = axes[1].barh(labels, values_right, color=ACCENT_COLOR, alpha=0.85)
         axes[1].invert_yaxis()
-        axes[1].set_title(right_label, fontsize=12, loc="left")
-        axes[1].tick_params(axis="y", labelsize=8)
-        axes[1].tick_params(axis="x", labelsize=8)
-        fig.suptitle(title, fontsize=13)
+        axes[1].set_title(right_label, fontsize=CHART_LABEL_SIZE, loc="left")
+        axes[1].tick_params(axis="y", labelsize=CHART_TICK_SIZE)
+        axes[1].tick_params(axis="x", labelsize=CHART_TICK_SIZE)
+        axes[1].xaxis.set_major_formatter(FuncFormatter(lambda x, _: self._format_chart_value(x, right_format)))
+        axes[1].grid(axis="x", color="#e5e7eb", linewidth=0.6, alpha=0.8)
+        fig.suptitle(title, fontsize=CHART_TITLE_SIZE)
+
+        for bars, values, fmt, axis in (
+            (bars_left, values_left, left_format, axes[0]),
+            (bars_right, values_right, right_format, axes[1]),
+        ):
+            for idx, bar in enumerate(bars):
+                label = self._format_chart_value(values[idx], fmt)
+                axis.text(
+                    bar.get_width(),
+                    bar.get_y() + bar.get_height() / 2,
+                    f" {label}",
+                    va="center",
+                    ha="left",
+                    fontsize=CHART_ANNOT_SIZE,
+                )
         fig.tight_layout()
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
 
     def _plot_heatmap(self, path: Path, matrix: list[list[float]], labels: list[str], title: str):
-        fig, ax = plt.subplots(figsize=(9, 3.8), dpi=150)
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE_WIDE, dpi=CHART_DPI)
         im = ax.imshow(matrix, aspect="auto")
-        ax.set_title(title, fontsize=13, loc="left", pad=8)
+        ax.set_title(title, fontsize=CHART_TITLE_SIZE, loc="left", pad=12)
         ax.set_yticks(range(len(labels)))
-        ax.set_yticklabels(labels, fontsize=9)
+        ax.set_yticklabels(labels, fontsize=CHART_TICK_SIZE)
         ax.set_xticks(range(0, 24, 3))
-        ax.set_xticklabels([str(h) for h in range(0, 24, 3)], fontsize=9)
+        ax.set_xticklabels([str(h) for h in range(0, 24, 3)], fontsize=CHART_TICK_SIZE)
         fig.colorbar(im, ax=ax, fraction=0.02, pad=0.02)
         fig.tight_layout()
         fig.savefig(path, bbox_inches="tight")
@@ -1741,9 +2080,23 @@ class ReportGenerator:
                 continue
             path = output_dir / filename
             if spec["type"] == "bar":
-                self._plot_bar_chart(path, spec["labels"], spec["values"], spec["title"], horizontal=False)
+                self._plot_bar_chart(
+                    path,
+                    spec["labels"],
+                    spec["values"],
+                    spec["title"],
+                    horizontal=False,
+                    value_format=spec.get("value_format", "number"),
+                )
             elif spec["type"] == "barh":
-                self._plot_bar_chart(path, spec["labels"], spec["values"], spec["title"], horizontal=True)
+                self._plot_bar_chart(
+                    path,
+                    spec["labels"],
+                    spec["values"],
+                    spec["title"],
+                    horizontal=True,
+                    value_format=spec.get("value_format", "number"),
+                )
             elif spec["type"] == "dual_bar":
                 self._plot_dual_bar_chart(
                     path,
@@ -1753,6 +2106,8 @@ class ReportGenerator:
                     spec["title"],
                     "전환",
                     "전환당 비용",
+                    left_format=spec.get("left_format", "number"),
+                    right_format=spec.get("right_format", "currency"),
                 )
             elif spec["type"] == "device_compare":
                 self._plot_dual_bar_chart(
@@ -1763,6 +2118,8 @@ class ReportGenerator:
                     spec["title"],
                     "전환",
                     "전환당 비용",
+                    left_format=spec.get("left_format", "number"),
+                    right_format=spec.get("right_format", "currency"),
                 )
             elif spec["type"] == "heatmap":
                 self._plot_heatmap(path, spec["matrix"], spec["labels"], spec["title"])
@@ -1823,6 +2180,14 @@ def build_render_context(
         "exec_summary": report_data["exec_summary"],
         "today_line": report_data["today_line"],
         "action_cards": report_data["action_cards"],
+        "fixed_top_sample": report_data["fixed_top_sample"],
+        "kpi_summary_lines": report_data["kpi_summary_lines"],
+        "weekly_notes": report_data["weekly_notes"],
+        "waste_notes": report_data["waste_notes"],
+        "waste_actions": report_data["waste_actions"],
+        "growth_notes": report_data["growth_notes"],
+        "diagnostic_notes": report_data["diagnostic_notes"],
+        "final_conclusion": report_data["final_conclusion"],
         "extra_charts": extra_charts,
         "build_metadata": {
             "env": build_env,
@@ -1862,18 +2227,7 @@ def main():
         end_date=end_date,
     )
     generator.render_report(report_dir / "index.html", report_context)
-
-    root_context = build_render_context(
-        report_data,
-        chart_prefix=f"reports/{end_date}/",
-        logo_png_path="assets/huelight-logo.png",
-        logo_svg_path="assets/huelight-logo.svg",
-        logo_url=logo_url,
-        start_date=start_date,
-        end_date=end_date,
-    )
-    generator.render_report(Path("index.html"), root_context)
-    print("\n✅ 완료: index.html 및 reports 히스토리 업데이트")
+    print("\n✅ 완료: reports 히스토리 업데이트")
 
 
 if __name__ == "__main__":
