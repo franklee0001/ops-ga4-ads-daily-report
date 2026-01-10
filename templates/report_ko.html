@@ -16,10 +16,10 @@
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif;
       color: var(--ink);
-      background: radial-gradient(circle at 12% 10%, #eef2ff 0%, var(--bg) 48%, #f8fafc 100%);
-      line-height: 1.55;
+      background: #f8fafc;
+      line-height: 1.6;
       letter-spacing: -0.01em;
     }
     .page {
@@ -35,8 +35,8 @@
       padding: 28px 30px;
       border-radius: 18px;
       background: var(--surface);
-      box-shadow: 0 12px 24px rgba(15, 23, 42, 0.08);
-      border: 1px solid rgba(37, 99, 235, 0.12);
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+      border: 1px solid var(--line);
     }
     .brand {
       display: flex;
@@ -74,7 +74,7 @@
       border-radius: 18px;
       padding: 26px 28px;
       border: 1px solid var(--line);
-      box-shadow: 0 10px 22px rgba(15, 23, 42, 0.06);
+      box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06);
     }
     .section-title {
       font-size: 24px;
@@ -91,6 +91,51 @@
       border-radius: 50%;
       background: var(--accent);
     }
+    .top-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .strip-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px 16px;
+      box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+    }
+    .strip-label {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    .strip-value {
+      font-size: 20px;
+      font-weight: 700;
+      word-break: break-word;
+      overflow-wrap: anywhere;
+    }
+    .toggle-group {
+      display: inline-flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .toggle-btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--ink);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+    .toggle-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .hidden { display: none !important; }
     .summary-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -154,7 +199,7 @@
     }
     .chart-card img {
       width: 100%;
-      height: 320px;
+      height: 380px;
       object-fit: contain;
       background: #fff;
       border-radius: 10px;
@@ -175,6 +220,9 @@
       text-align: left;
       font-size: 13px;
       border-bottom: 1px solid var(--line);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
     th {
       background: #111827;
@@ -191,22 +239,6 @@
       font-size: 16px;
       color: var(--ink);
       margin-bottom: 12px;
-    }
-    .fixed-sample {
-      font-size: 14px;
-      color: #7c2d12;
-      background: #fff7ed;
-      border: 1px solid #fed7aa;
-      border-radius: 12px;
-      padding: 10px 12px;
-      margin-bottom: 10px;
-    }
-    .fixed-sample .sample-title {
-      font-weight: 700;
-      margin-bottom: 6px;
-    }
-    .fixed-sample .sample-title + div {
-      margin-bottom: 4px;
     }
     .ai-insights {
       list-style: none;
@@ -244,6 +276,9 @@
     .action-desc {
       font-size: 13px;
       color: var(--muted);
+      word-break: break-word;
+      overflow-wrap: anywhere;
+      white-space: normal;
     }
     .action-reason {
       font-size: 12px;
@@ -256,7 +291,7 @@
     }
     .chart-image {
       width: 100%;
-      height: 360px;
+      height: 420px;
       object-fit: contain;
       background: #fff;
       border-radius: 10px;
@@ -284,9 +319,6 @@
       border: 1px solid var(--line);
       font-size: 14px;
       color: var(--muted);
-    }
-    .geo-chart.small {
-      height: 320px;
     }
     .empty-state {
       padding: 20px;
@@ -357,50 +389,63 @@
       </div>
     </header>
     <section class="section">
+      <div class="section-title">오늘 핵심 요약</div>
+      <div class="top-strip">
+        {% for card in top_strip.cards %}
+        <div class="strip-card">
+          <div class="strip-label">{{ card.label }}</div>
+          <div class="strip-value" title="{{ card.tooltip if card.tooltip else card.value }}">{{ card.value }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+    <section class="section">
       <div class="section-title">오늘 한 줄 결론</div>
-      <div class="fixed-sample">{{ fixed_top_sample.today_line }}</div>
       <div class="ai-summary">{{ today_line }}</div>
     </section>
 
     <section class="section">
       <div class="section-title">오늘 할 일 3개</div>
-      <div class="fixed-sample">
-        {% for card in fixed_top_sample.action_cards %}
-        <div class="sample-title">{{ card.title }}</div>
-        <div>{{ card.desc }}</div>
-        <div class="action-reason">{{ card.reason }}</div>
-        {% endfor %}
+      <div class="toggle-group" data-range-toggle="global">
+        <button class="toggle-btn active" data-range="7d">최근 7일</button>
+        <button class="toggle-btn" data-range="1d">오늘(부분)</button>
+        <button class="toggle-btn" data-range="30d">최근 30일</button>
+        <button class="toggle-btn" data-range="all">전체기간</button>
       </div>
-      <div class="action-grid">
-        {% for card in action_cards %}
+      {% for key in ["7d", "1d", "30d", "all"] %}
+      <div class="action-grid toggle-panel {% if key != '7d' %}hidden{% endif %}" data-toggle-panel="actions" data-range="{{ key }}">
+        {% for card in action_cards_by_range[key] %}
         <div class="action-card">
           <div class="action-title">{{ card.title }}</div>
-          <div class="action-desc">{{ card.desc }}</div>
+          <div class="action-desc">
+            {% for item in card.items_list %}
+            <div>{{ item }}</div>
+            {% endfor %}
+          </div>
           <div class="action-reason">{{ card.reason }}</div>
         </div>
         {% endfor %}
       </div>
+      {% endfor %}
     </section>
 
     <section class="section">
       <div class="section-title">어디서 들어왔나</div>
-      {% if geo_map.has_data %}
+      <div class="toggle-group" data-range-toggle="global">
+        <button class="toggle-btn active" data-range="7d">최근 7일</button>
+        <button class="toggle-btn" data-range="1d">오늘(부분)</button>
+        <button class="toggle-btn" data-range="30d">최근 30일</button>
+        <button class="toggle-btn" data-range="all">전체기간</button>
+      </div>
       <div id="geo-chart" class="geo-chart"></div>
+      <div id="geo-empty" class="empty-state hidden">국가별 데이터가 없습니다.</div>
       <div class="chart-note">
-        <strong>의미:</strong> 최근 7일 국가별 활성 사용자 분포입니다.<br>
+        <strong>의미:</strong> 선택한 기간의 국가별 활성 사용자 분포입니다.<br>
         <strong>해석:</strong> 상위 국가가 편중되면 해당 국가용 메시지/랜딩을 강화하세요.
       </div>
-      {% if extra_charts.countries_top10 %}
-      <div class="chart-title">국가별 상위 10</div>
-      <img class="chart-image" src="{{ extra_charts.countries_top10 }}" alt="국가별 상위 10" onerror="this.style.display='none'">
-      <div class="chart-note">
-        <strong>의미:</strong> 활성 사용자가 많은 국가 상위 10입니다.<br>
-        <strong>해석:</strong> 상위 국가는 예산 집중, 하위 국가는 메시지 테스트 후보입니다.
-      </div>
-      {% endif %}
-      {% if geo_map.top10 %}
       <div class="table-wrap">
-        <table>
+        {% for key in ["7d", "1d", "30d", "all"] %}
+        <table class="toggle-panel {% if key != '7d' %}hidden{% endif %}" data-toggle-panel="geo" data-range="{{ key }}">
           <thead>
             <tr>
               <th>국가</th>
@@ -408,7 +453,7 @@
             </tr>
           </thead>
           <tbody>
-            {% for row in geo_map.top10 %}
+            {% for row in geo_maps[key].top10 %}
             <tr>
               <td>{{ row.country }}</td>
               <td>{{ row.active_display }}</td>
@@ -416,16 +461,42 @@
             {% endfor %}
           </tbody>
         </table>
+        {% endfor %}
       </div>
-      {% endif %}
-      <div class="note">총 활성 사용자: {{ geo_map.total_active_display }}명</div>
-      {% else %}
-      <div class="empty-state">국가별 데이터가 없습니다.</div>
-      {% endif %}
+      <div class="note" id="geo-total"></div>
     </section>
 
     <section class="section">
       <div class="section-title">핵심 지표</div>
+      <div class="toggle-group" data-range-toggle="global">
+        <button class="toggle-btn active" data-range="7d">최근 7일</button>
+        <button class="toggle-btn" data-range="1d">오늘(부분)</button>
+        <button class="toggle-btn" data-range="30d">최근 30일</button>
+        <button class="toggle-btn" data-range="all">전체기간</button>
+      </div>
+      {% for key in ["7d", "1d", "30d", "all"] %}
+      <div class="toggle-panel {% if key != '7d' %}hidden{% endif %}" data-toggle-panel="kpi" data-range="{{ key }}">
+        <div class="chart-title">{{ kpi_ranges[key] }}</div>
+        <div class="summary-grid">
+          {% for card in kpi_by_range[key] %}
+          <div class="kpi-card">
+            <div class="kpi-label">{{ card.label }}</div>
+            <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
+            {% if card.delta %}<div class="kpi-delta">{{ card.delta }}</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="kpi-summary">
+          {% for line in kpi_summary_by_range[key] %}
+          <div>• {{ line }}</div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+      <div class="divider"></div>
+      <div class="chart-title">어제(확정) 한 줄 결론</div>
+      <div class="ai-summary">{{ yesterday_line }}</div>
+      <div class="divider"></div>
       <div class="chart-title">어제(확정) 핵심 지표 · {{ summary.yesterday_date }}</div>
       <div class="summary-grid">
         {% for card in summary.yesterday_cards %}
@@ -434,44 +505,6 @@
           <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
           {% if card.delta %}<div class="kpi-delta">{{ card.delta }}</div>{% endif %}
         </div>
-        {% endfor %}
-      </div>
-      <div class="divider"></div>
-      <div class="chart-title">오늘(부분집계, 현재까지)</div>
-      <div class="summary-grid compact">
-        {% for card in summary.today_cards %}
-        <div class="kpi-card small">
-          <div class="kpi-label">{{ card.label }}</div>
-          <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
-          {% if card.delta %}<div class="kpi-delta">{{ card.delta }}</div>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      <div class="divider"></div>
-      <div class="chart-title">지난 7일 {{ summary.last_7_range }}</div>
-      <div class="summary-grid">
-        {% for card in summary.last_7_cards %}
-        <div class="kpi-card">
-          <div class="kpi-label">{{ card.label }}</div>
-          <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
-          {% if card.delta %}<div class="kpi-delta">{{ card.delta }}</div>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      <div class="divider"></div>
-      <div class="chart-title">지난 30일 {{ summary.last_30_range }}</div>
-      <div class="summary-grid">
-        {% for card in summary.last_30_cards %}
-        <div class="kpi-card">
-          <div class="kpi-label">{{ card.label }}</div>
-          <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
-          {% if card.delta %}<div class="kpi-delta">{{ card.delta }}</div>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      <div class="kpi-summary">
-        {% for line in kpi_summary_lines %}
-        <div>• {{ line }}</div>
         {% endfor %}
       </div>
     </section>
@@ -489,6 +522,8 @@
           {% endfor %}
         </ul>
       </div>
+      {% else %}
+      <div class="empty-state">이번 주 비교 데이터가 없습니다.</div>
       {% endif %}
     </section>
 
@@ -533,6 +568,7 @@
       </div>
       <div class="divider"></div>
       <div class="chart-title">광고비만 나간 키워드 TOP</div>
+      <div class="note">전환은 없는데 비용이 큰 키워드입니다 (즉, 돈만 쓰고 문의/전환이 없는 항목).</div>
       {% if keyword_tables.last_7.wasted.rows %}
       <div class="table-wrap">
         <table>
@@ -558,7 +594,8 @@
       <div class="empty-state">낭비 키워드 데이터가 없습니다.</div>
       {% endif %}
       <div class="divider"></div>
-      <div class="chart-title">사람들이 실제로 검색한 말 중 손해 TOP</div>
+      <div class="chart-title">실제 검색어 중 낭비 TOP (전환 0 + 비용 상위)</div>
+      <div class="note">전환 없이 비용만 발생한 검색어입니다. 네거티브 키워드 후보입니다.</div>
       {% if search_terms.table.rows %}
       <div class="table-wrap">
         <table>
@@ -625,8 +662,8 @@
 
     <section class="section">
       <div class="section-title">왜 이런지 빠르게 보기</div>
-      {% if extra_charts.weekday_conversions %}
-      <img class="chart-image" src="{{ extra_charts.weekday_conversions }}" alt="요일별 전환" onerror="this.style.display='none'">
+      {% if weekday_chart_path %}
+      <img class="chart-image" src="{{ weekday_chart_path }}" alt="요일별 전환" onerror="this.style.display='none'">
       <div class="chart-note">
         <strong>의미:</strong>
         <ul>
@@ -636,6 +673,8 @@
         </ul>
         <strong>해석:</strong> 전환이 높은 요일/시간에 예산을 집중하세요.
       </div>
+      {% else %}
+      <div class="empty-state">해당 기간에 요일별 집계 데이터가 없습니다.</div>
       {% endif %}
       {% if extra_charts.hour_weekday_heatmap %}
       <div class="divider"></div>
@@ -670,18 +709,18 @@
         <summary>어디로 들어왔나(랜딩/유입경로)</summary>
         <div class="chart-grid">
           <div>
-            <div class="chart-title">GA4 상위 랜딩페이지 (최근 30일)</div>
+            <div class="chart-title">GA4 상위 랜딩페이지 (최근 30일, TOP 10)</div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    {% for header in tables.landing_pages.headers %}
+                    {% for header in tables.landing_pages_top.headers %}
                     <th>{{ header }}</th>
                     {% endfor %}
                   </tr>
                 </thead>
                 <tbody>
-                  {% for row in tables.landing_pages.rows %}
+                  {% for row in tables.landing_pages_top.rows %}
                   <tr>
                     {% for cell in row %}
                     <td>{{ cell }}</td>
@@ -691,20 +730,43 @@
                 </tbody>
               </table>
             </div>
+            <details>
+              <summary>전체 보기</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      {% for header in tables.landing_pages_all.headers %}
+                      <th>{{ header }}</th>
+                      {% endfor %}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in tables.landing_pages_all.rows %}
+                    <tr>
+                      {% for cell in row %}
+                      <td>{{ cell }}</td>
+                      {% endfor %}
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
           <div>
-            <div class="chart-title">GA4 상위 소스/미디엄 (최근 30일)</div>
+            <div class="chart-title">GA4 상위 소스/미디엄 (최근 30일, TOP 10)</div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    {% for header in tables.source_medium.headers %}
+                    {% for header in tables.source_medium_top.headers %}
                     <th>{{ header }}</th>
                     {% endfor %}
                   </tr>
                 </thead>
                 <tbody>
-                  {% for row in tables.source_medium.rows %}
+                  {% for row in tables.source_medium_top.rows %}
                   <tr>
                     {% for cell in row %}
                     <td>{{ cell }}</td>
@@ -714,17 +776,31 @@
                 </tbody>
               </table>
             </div>
+            <details>
+              <summary>전체 보기</summary>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      {% for header in tables.source_medium_all.headers %}
+                      <th>{{ header }}</th>
+                      {% endfor %}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in tables.source_medium_all.rows %}
+                    <tr>
+                      {% for cell in row %}
+                      <td>{{ cell }}</td>
+                      {% endfor %}
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </details>
           </div>
         </div>
-        {% if geo_map.has_data %}
-        <div class="divider"></div>
-        <div class="chart-title">국가 지도(작게)</div>
-        <div id="geo-chart-mini" class="geo-chart small"></div>
-        {% if extra_charts.countries_top10 %}
-        <div class="chart-title">국가별 상위 10(재확인)</div>
-        <img class="chart-image" src="{{ extra_charts.countries_top10 }}" alt="국가별 상위 10(재확인)" onerror="this.style.display='none'">
-        {% endif %}
-        {% endif %}
       </details>
       <details>
         <summary>광고 캠페인 상세</summary>
@@ -824,25 +900,85 @@
     </section>
   </div>
 
-  {% if geo_map.has_data %}
   <script>
-    google.charts.load("current", {"packages":["geochart"]});
-    google.charts.setOnLoadCallback(drawGeoChart);
-    function drawGeoChart() {
-      var data = google.visualization.arrayToDataTable({{ geo_map.chart_json | safe }});
-      var options = {
-        backgroundColor: "transparent",
-        legend: "none"
-      };
-      var chart = new google.visualization.GeoChart(document.getElementById("geo-chart"));
-      chart.draw(data, options);
-      var mini = document.getElementById("geo-chart-mini");
-      if (mini) {
-        var miniChart = new google.visualization.GeoChart(mini);
-        miniChart.draw(data, options);
+    const GEO_MAPS = {
+      "1d": {
+        hasData: {{ "true" if geo_maps["1d"].has_data else "false" }},
+        data: {{ geo_maps["1d"].chart_json | safe }},
+        total: "{{ geo_maps["1d"].total_active_display }}"
+      },
+      "7d": {
+        hasData: {{ "true" if geo_maps["7d"].has_data else "false" }},
+        data: {{ geo_maps["7d"].chart_json | safe }},
+        total: "{{ geo_maps["7d"].total_active_display }}"
+      },
+      "30d": {
+        hasData: {{ "true" if geo_maps["30d"].has_data else "false" }},
+        data: {{ geo_maps["30d"].chart_json | safe }},
+        total: "{{ geo_maps["30d"].total_active_display }}"
+      },
+      "all": {
+        hasData: {{ "true" if geo_maps["all"].has_data else "false" }},
+        data: {{ geo_maps["all"].chart_json | safe }},
+        total: "{{ geo_maps["all"].total_active_display }}"
       }
+    };
+
+    function setActiveButtons(range) {
+      const buttons = document.querySelectorAll("[data-range-toggle=\"global\"] .toggle-btn");
+      buttons.forEach(btn => btn.classList.toggle("active", btn.dataset.range === range));
     }
+
+    function showPanels(range) {
+      const panels = document.querySelectorAll("[data-toggle-panel]");
+      panels.forEach(panel => {
+        panel.classList.toggle("hidden", panel.dataset.range !== range);
+      });
+    }
+
+    function drawGeo(range) {
+      const geo = GEO_MAPS[range];
+      const chartEl = document.getElementById("geo-chart");
+      const emptyEl = document.getElementById("geo-empty");
+      const totalEl = document.getElementById("geo-total");
+      if (!geo || !geo.hasData) {
+        chartEl.classList.add("hidden");
+        emptyEl.classList.remove("hidden");
+        totalEl.textContent = "";
+        return;
+      }
+      emptyEl.classList.add("hidden");
+      chartEl.classList.remove("hidden");
+      totalEl.textContent = `총 활성 사용자: ${geo.total}명`;
+      const data = google.visualization.arrayToDataTable(geo.data);
+      const options = { backgroundColor: "transparent", legend: "none" };
+      const chart = new google.visualization.GeoChart(chartEl);
+      chart.draw(data, options);
+    }
+
+    function bindGlobalToggle() {
+      const buttons = document.querySelectorAll("[data-range-toggle=\"global\"] .toggle-btn");
+      buttons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const range = btn.dataset.range;
+          applyRange(range);
+        });
+      });
+    }
+
+    function applyRange(range) {
+      setActiveButtons(range);
+      showPanels(range);
+      drawGeo(range);
+    }
+
+    google.charts.load("current", {"packages":["geochart"]});
+    google.charts.setOnLoadCallback(() => {
+      applyRange("7d");
+      bindGlobalToggle();
+    });
+
+    showPanels("7d");
   </script>
-  {% endif %}
 </body>
 </html>

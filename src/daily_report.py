@@ -4,7 +4,6 @@ HueLight GA4/Google Ads 일일 리포트 생성기
 
 import json
 import os
-import shutil
 import sys
 import textwrap
 from datetime import date, datetime, timedelta
@@ -228,18 +227,28 @@ class ReportGenerator:
             tables.get("top_landing"),
             tables.get("top_campaign"),
         )
-        geo_map = self._get_geo_map(last_7_start, last_7_end) if last_7_dates else {
-            "has_data": False,
-            "chart_json": "[]",
-            "start": last_7_start.isoformat(),
-            "end": last_7_end.isoformat(),
-            "total_active": 0,
-            "total_active_display": format_int(0),
-            "top10": [],
-        }
+        geo_maps = self._build_geo_maps(start, end)
         keyword_tables = self._get_ads_keyword_tables(last_7_start, last_7_end, last_30_complete_start, last_30_end)
         search_terms = self._get_ads_search_term_waste(last_7_start, last_7_end)
         wasted_summary = self._build_wasted_summary(last_7_dates, ads_daily, keyword_tables, search_terms)
+        today_date = end
+        yesterday_date = end - timedelta(days=1)
+        today_keyword_rows = self._get_ads_keyword_rows(today_date, today_date)
+        today_search_terms = self._get_ads_search_term_waste(today_date, today_date)
+        today_wasted_summary = self._build_wasted_summary(
+            [today_date.isoformat()],
+            ads_daily,
+            {"last_7": {"rows": today_keyword_rows}},
+            today_search_terms,
+        )
+        yesterday_keyword_rows = self._get_ads_keyword_rows(yesterday_date, yesterday_date)
+        yesterday_search_terms = self._get_ads_search_term_waste(yesterday_date, yesterday_date)
+        yesterday_wasted_summary = self._build_wasted_summary(
+            [yesterday_date.isoformat()],
+            ads_daily,
+            {"last_7": {"rows": yesterday_keyword_rows}},
+            yesterday_search_terms,
+        )
         prev_keyword_tables = {"last_7": {"rows": []}}
         prev_search_terms = {"start": prev_7_start.isoformat(), "end": prev_7_end.isoformat(), "rows": []}
         prev_wasted_summary = None
@@ -256,9 +265,10 @@ class ReportGenerator:
         device_stats = self._get_device_stats(last_7_start, last_7_end)
         weekday_stats = self._get_weekday_conversions(last_7_start, last_7_end)
         heatmap_stats = self._get_hour_weekday_heatmap(last_7_start, last_7_end)
-        today_line = self._build_today_line(self.end_date, ads_daily, wasted_summary)
-        action_cards = self._build_action_cards(keyword_tables, search_terms)
-        fixed_top_sample = self._build_fixed_top_sample()
+        today_line = self._build_today_line(self.end_date, ads_daily, today_wasted_summary)
+        yesterday_line = self._build_today_line((end - timedelta(days=1)).isoformat(), ads_daily, yesterday_wasted_summary)
+        action_cards_by_range = self._build_action_cards_by_range(start, end)
+        top_strip = self._build_top_strip_today(end, ads_daily)
         exec_summary = self._build_executive_summary(
             last_7_dates,
             prev_7_dates,
@@ -268,11 +278,14 @@ class ReportGenerator:
             keyword_tables,
             search_terms,
         )
-        kpi_summary_lines = self._build_kpi_summary_lines(
-            last_7_dates,
-            prev_7_dates,
+        kpi_summary_by_range = self._build_kpi_summary_by_range(
             ga4_daily,
             ads_daily,
+            last_7_dates,
+            prev_7_dates,
+            last_30_complete_dates,
+            prev_30_dates,
+            all_dates,
             wasted_summary,
             prev_wasted_summary,
         )
@@ -286,10 +299,10 @@ class ReportGenerator:
             search_terms,
         )
         waste_notes = self._build_waste_notes(wasted_summary)
-        waste_actions = self._build_waste_actions(action_cards, tables)
+        waste_actions = self._build_waste_actions(action_cards_by_range["7d"], tables)
         growth_notes = self._build_growth_notes(keyword_tables)
         diagnostic_notes = self._build_diagnostic_notes(weekday_stats)
-        final_conclusion = self._build_final_conclusion(exec_summary, action_cards)
+        final_conclusion = self._build_final_conclusion(exec_summary, action_cards_by_range["7d"])
         extra_chart_specs = self._build_extra_chart_specs(
             ga4_daily,
             ads_daily,
@@ -297,34 +310,51 @@ class ReportGenerator:
             prev_7_dates,
             keyword_tables,
             search_terms,
-            geo_map,
+            geo_maps.get("7d", {}),
             landing_page_stats,
             device_stats,
             weekday_stats,
             heatmap_stats,
         )
+        kpi_by_range = {
+            "1d": summary["today_cards"],
+            "7d": summary["last_7_cards"],
+            "30d": summary["last_30_cards"],
+            "all": summary["all_time_cards"],
+        }
+        kpi_ranges = {
+            "1d": "오늘(부분집계)",
+            "7d": summary["last_7_range"],
+            "30d": summary["last_30_range"],
+            "all": f"{self.start_date} ~ {self.end_date}",
+        }
+        weekday_has_data = any(row.get("conversions", 0) for row in weekday_stats)
 
         return {
             "summary": summary,
             "tables": tables,
             "charts": self._build_chart_data(ga4_daily, ads_daily, last_30_dates, ga4_has_data, ads_has_data),
             "ai_summary": ai_summary,
-            "geo_map": geo_map,
+            "geo_maps": geo_maps,
             "keyword_tables": keyword_tables,
             "search_terms": search_terms,
             "wasted_summary": wasted_summary,
             "conversion_definitions": conversion_definitions,
             "exec_summary": exec_summary,
             "today_line": today_line,
-            "action_cards": action_cards,
-            "fixed_top_sample": fixed_top_sample,
-            "kpi_summary_lines": kpi_summary_lines,
+            "yesterday_line": yesterday_line,
+            "action_cards_by_range": action_cards_by_range,
+            "top_strip": top_strip,
+            "kpi_summary_by_range": kpi_summary_by_range,
+            "kpi_by_range": kpi_by_range,
+            "kpi_ranges": kpi_ranges,
             "weekly_notes": weekly_notes,
             "waste_notes": waste_notes,
             "waste_actions": waste_actions,
             "growth_notes": growth_notes,
             "diagnostic_notes": diagnostic_notes,
             "final_conclusion": final_conclusion,
+            "weekday_has_data": weekday_has_data,
             "landing_page_stats": landing_page_stats,
             "device_stats": device_stats,
             "weekday_stats": weekday_stats,
@@ -808,14 +838,8 @@ class ReportGenerator:
         }
         return mapping.get(match_type, "기타")
 
-    def _short_label(self, value: str, limit: int = 20) -> str:
-        if len(value) <= limit:
-            return value
-        return f"{value[:limit]}…"
-
-    def _wrap_label(self, value: str, width: int = 12, limit: int = 28) -> str:
-        text = self._short_label(value, limit=limit)
-        return "\n".join(textwrap.wrap(text, width=width)) if len(text) > width else text
+    def _wrap_label(self, value: str, width: int = 12) -> str:
+        return "\n".join(textwrap.wrap(value, width=width)) if len(value) > width else value
 
     def _format_keyword_table(self, rows: list[dict]) -> dict:
         headers = [
@@ -1002,6 +1026,7 @@ class ReportGenerator:
             rows = self.ads.run_query(query)
         except Exception:
             return []
+        print(f"[DEBUG] 요일별 전환 rows={len(rows)} ({start_date}~{end_date})")
         mapping = {
             "MOBILE": "모바일",
             "DESKTOP": "데스크톱",
@@ -1039,11 +1064,15 @@ class ReportGenerator:
             "SUNDAY": "일",
         }
         results = []
+        total = 0.0
         for row in rows:
+            conversions = row.metrics.conversions
+            total += conversions
             results.append({
                 "weekday": mapping.get(str(row.segments.day_of_week), "기타"),
-                "conversions": row.metrics.conversions,
+                "conversions": conversions,
             })
+        print(f"[DEBUG] 요일별 전환 합계={total:.1f}")
         return results
 
     def _get_hour_weekday_heatmap(self, start_date: date, end_date: date) -> dict:
@@ -1091,63 +1120,247 @@ class ReportGenerator:
             f"낭비 키워드 {top_item}가 큼."
         )
 
-    def _build_action_cards(self, keyword_tables: dict, search_terms: dict) -> list[dict]:
-        wasted_items = search_terms["rows"] if search_terms["rows"] else [
-            row for row in keyword_tables["last_7"]["rows"]
+    def _build_action_cards(self, keyword_rows: list[dict], search_term_rows: list[dict]) -> list[dict]:
+        wasted_items = search_term_rows if search_term_rows else [
+            row for row in keyword_rows
             if row["conversions"] == 0 and row["cost_micros"] > 0
         ]
-        pause_candidates = ", ".join(
-            self._short_label(item.get("term") or item.get("keyword") or "낭비 항목")
+        pause_candidates = [
+            item.get("term") or item.get("keyword") or "낭비 항목"
             for item in wasted_items[:3]
-        ) or "없음"
+        ] or ["없음"]
         pause_reason = "전환 0인데 비용이 상위권이라 우선 중지 후보"
 
-        negative_candidates = ", ".join(
-            self._short_label(item.get("term") or "")
-            for item in search_terms["rows"][:3]
-        ) or "데이터 없음"
+        negative_candidates = [
+            item.get("term") or "데이터 없음"
+            for item in search_term_rows[:3]
+        ] or ["데이터 없음"]
         negative_reason = "실제 검색어가 의도와 맞지 않아 손해 가능성"
 
         best_keywords = []
-        for row in keyword_tables["last_7"]["rows"]:
+        for row in keyword_rows:
             if row["conversions"] > 0:
                 cost = row["cost_micros"] / 1_000_000
                 cpa = safe_div(cost, row["conversions"])
                 best_keywords.append((row["keyword"], cpa))
         best_keywords.sort(key=lambda x: x[1])
-        budget_candidates = ", ".join(
-            f"{self._short_label(name)}({format_currency(cpa)})"
+        budget_candidates = [
+            f"{name}({format_currency(cpa)})"
             for name, cpa in best_keywords[:3]
-        ) or "데이터 없음"
+        ] or ["데이터 없음"]
         budget_reason = "전환이 나오고 전환당 비용이 낮아 확대 후보"
 
         return [
-            {"title": "Pause 후보", "desc": pause_candidates, "reason": pause_reason},
-            {"title": "네거티브 후보", "desc": negative_candidates, "reason": negative_reason},
-            {"title": "예산 강화 후보", "desc": budget_candidates, "reason": budget_reason},
+            {"title": "Pause 후보", "items_list": pause_candidates, "reason": pause_reason},
+            {"title": "네거티브 후보", "items_list": negative_candidates, "reason": negative_reason},
+            {"title": "예산 강화 후보", "items_list": budget_candidates, "reason": budget_reason},
         ]
 
-    def _build_fixed_top_sample(self) -> dict:
-        return {
-            "today_line": "오늘 광고는 전환 3.0건, 비용 ₩118,158, 낭비 키워드 red light therapy be…가 큼.",
-            "action_cards": [
-                {
-                    "title": "Pause 후보",
-                    "desc": "hydrogen bath, hydrogen bath genera…, hydrogen nano bath",
-                    "reason": "전환 0인데 비용이 상위권이라 우선 중지 후보",
-                },
-                {
-                    "title": "네거티브 후보",
-                    "desc": "hydrogen bath, hydrogen bath genera…, hydrogen nano bath",
-                    "reason": "실제 검색어가 의도와 맞지 않아 손해 가능성",
-                },
-                {
-                    "title": "예산 강화 후보",
-                    "desc": "hydrogen bath(₩7,786), whole body red light…(₩24,094), molecular hydrogen i…(₩67,273)",
-                    "reason": "전환이 나오고 전환당 비용이 낮아 확대 후보",
-                },
-            ],
+    def _build_action_cards_by_range(self, start: date, end: date) -> dict:
+        ranges = {
+            "1d": (end, end),
+            "7d": (end - timedelta(days=6), end),
+            "30d": (end - timedelta(days=29), end),
+            "all": (start, end),
         }
+        cards = {}
+        for key, (range_start, range_end) in ranges.items():
+            keyword_rows = self._get_ads_keyword_rows(range_start, range_end) if range_start <= range_end else []
+            search_terms = self._get_ads_search_term_waste(range_start, range_end)
+            cards[key] = self._build_action_cards(keyword_rows, search_terms.get("rows", []))
+        return cards
+
+    def _build_geo_maps(self, start: date, end: date) -> dict:
+        ranges = {
+            "1d": (end, end),
+            "7d": (max(start, end - timedelta(days=6)), end),
+            "30d": (max(start, end - timedelta(days=29)), end),
+            "all": (start, end),
+        }
+        result = {}
+        for key, (range_start, range_end) in ranges.items():
+            if range_start > range_end:
+                result[key] = {
+                    "has_data": False,
+                    "chart_json": "[]",
+                    "start": range_start.isoformat(),
+                    "end": range_end.isoformat(),
+                    "total_active": 0,
+                    "total_active_display": format_int(0),
+                    "top10": [],
+                }
+                continue
+            result[key] = self._get_geo_map(range_start, range_end)
+        return result
+
+    def _build_top_strip_today(self, end: date, ads_daily: dict) -> dict:
+        today = end.isoformat()
+        total_conversions = None
+        try:
+            rows = self.ga4.run_report([], ["conversions"], today, today)
+            if rows:
+                total_conversions = float(rows[0].get("conversions", 0))
+        except Exception:
+            total_conversions = None
+
+        visitors = None
+        try:
+            rows = self.ga4.run_report([], ["activeUsers"], today, today)
+            if rows:
+                visitors = float(rows[0].get("activeUsers", 0))
+        except Exception:
+            visitors = None
+
+        organic_sessions = None
+        organic_conversions = None
+        try:
+            rows = self.ga4.run_report(["sessionMedium"], ["sessions", "conversions"], today, today)
+            organic_sessions = 0.0
+            organic_conversions = 0.0
+            for row in rows:
+                if row.get("sessionMedium") == "organic":
+                    organic_sessions += float(row.get("sessions", 0))
+                    organic_conversions += float(row.get("conversions", 0))
+        except Exception:
+            organic_sessions = None
+            organic_conversions = None
+
+        top_landing = None
+        try:
+            rows = self.ga4.run_report(["landingPagePlusQueryString"], ["sessions"], today, today, limit=1000)
+            rows.sort(key=lambda r: float(r.get("sessions", 0)), reverse=True)
+            if rows:
+                top_landing = rows[0].get("landingPagePlusQueryString")
+        except Exception:
+            top_landing = None
+
+        ads_today = ads_daily.get(today, {"cost": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0})
+        ads_ctr = safe_div(ads_today["clicks"], ads_today["impressions"]) * 100 if ads_today["impressions"] else None
+
+        ads_inquiry = self._get_ads_inquiry_conversions(end, end)
+
+        def display(value: float | str | None, formatter=None) -> tuple[str, str | None]:
+            if value is None:
+                return "데이터 없음", "데이터가 없거나 권한/연동이 필요합니다."
+            if formatter:
+                return formatter(value), None
+            return str(value), None
+
+        cards = []
+        for label, value, formatter in [
+            ("오늘 총 문의 수", total_conversions, lambda v: format_float(v, 1)),
+            ("오늘 방문자 수(활성 사용자)", visitors, lambda v: format_int(v)),
+            ("오늘 쓴 돈(광고비)", ads_today["cost"], format_currency),
+            ("오늘 SEO 방문자 수(세션)", organic_sessions, lambda v: format_int(v)),
+            ("오늘 SEO 문의 수", organic_conversions, lambda v: format_float(v, 1)),
+            ("오늘 Google Ads 문의 수", ads_inquiry, lambda v: format_float(v, 1)),
+            ("오늘 가장 많이 본 페이지", top_landing, None),
+            ("오늘 광고 클릭률(CTR)", ads_ctr, lambda v: format_percent(v, 1)),
+            ("오늘 광고 노출 수", float(ads_today["impressions"]), lambda v: format_int(v)),
+        ]:
+            value_text, tooltip = display(value, formatter)
+            cards.append({"label": label, "value": value_text, "tooltip": tooltip})
+        return {"cards": cards, "date": today}
+
+    def _get_ads_inquiry_conversions(self, start: date, end: date) -> float | None:
+        inquiry_keywords = ["문의", "문의하기", "contact", "inquiry", "lead", "form", "submit"]
+        if start > end:
+            return None
+        query = (
+            "SELECT segments.conversion_action_name, metrics.conversions "
+            "FROM customer "
+            f"WHERE segments.date BETWEEN '{start.isoformat()}' AND '{end.isoformat()}'"
+        )
+        try:
+            rows = self.ads.run_query(query)
+        except Exception:
+            return None
+        total = 0.0
+        matched = False
+        for row in rows:
+            name = (row.segments.conversion_action_name or "").lower()
+            if any(key in name for key in inquiry_keywords):
+                matched = True
+                total += row.metrics.conversions
+        return total if matched else None
+
+    def _build_kpi_summary_by_range(
+        self,
+        ga4_daily: dict,
+        ads_daily: dict,
+        last_7_dates: list[str],
+        prev_7_dates: list[str],
+        last_30_dates: list[str],
+        prev_30_dates: list[str],
+        all_dates: list[str],
+        wasted_summary: dict,
+        prev_wasted_summary: dict | None,
+    ) -> dict:
+        today_key = self.end_date
+        yesterday_key = (datetime.strptime(self.end_date, "%Y-%m-%d").date() - timedelta(days=1)).isoformat()
+        start_date = datetime.strptime(self.start_date, "%Y-%m-%d").date()
+        end_date = datetime.strptime(self.end_date, "%Y-%m-%d").date()
+
+        def build_waste_summary(range_start: date, range_end: date, dates: list[str]) -> dict:
+            keyword_rows = self._get_ads_keyword_rows(range_start, range_end) if range_start <= range_end else []
+            search_terms = self._get_ads_search_term_waste(range_start, range_end)
+            keyword_tables = {"last_7": {"rows": keyword_rows}}
+            return self._build_wasted_summary(dates, ads_daily, keyword_tables, search_terms)
+
+        def sum_ads(dates: list[str]) -> tuple[float, float]:
+            cost = sum(ads_daily[d]["cost"] for d in dates) if dates else 0.0
+            conv = sum(ads_daily[d]["conversions"] for d in dates) if dates else 0.0
+            return cost, conv
+
+        wasted_1d = build_waste_summary(end_date, end_date, [today_key])
+        prev_wasted_1d = build_waste_summary(end_date - timedelta(days=1), end_date - timedelta(days=1), [yesterday_key])
+        wasted_30d = build_waste_summary(
+            max(start_date, end_date - timedelta(days=29)),
+            end_date,
+            last_30_dates,
+        )
+        prev_wasted_30d = build_waste_summary(
+            max(start_date, end_date - timedelta(days=59)),
+            max(start_date, end_date - timedelta(days=30)),
+            prev_30_dates,
+        )
+        wasted_all = build_waste_summary(start_date, end_date, all_dates)
+
+        kpi_by_range = {
+            "1d": self._build_kpi_summary_lines(
+                [today_key],
+                [yesterday_key],
+                ga4_daily,
+                ads_daily,
+                wasted_1d,
+                prev_wasted_1d,
+            ),
+            "7d": self._build_kpi_summary_lines(
+                last_7_dates,
+                prev_7_dates,
+                ga4_daily,
+                ads_daily,
+                wasted_summary,
+                prev_wasted_summary,
+            ),
+            "30d": self._build_kpi_summary_lines(
+                last_30_dates,
+                prev_30_dates,
+                ga4_daily,
+                ads_daily,
+                wasted_30d,
+                prev_wasted_30d,
+            ),
+        }
+
+        total_cost, total_conv = sum_ads(all_dates)
+        total_cpa = safe_div(total_cost, total_conv)
+        kpi_by_range["all"] = [
+            f"전체기간 전환 {format_float(total_conv, 1)}건 / 비용 {format_currency(total_cost)}입니다.",
+            f"전체기간 CPA는 {format_currency(total_cpa)}입니다.",
+            f"전체기간 낭비 비중은 {wasted_all['wasted_share_display']}입니다.",
+        ]
+        return kpi_by_range
 
     def _select_best_keywords(self, keyword_rows: list[dict], limit: int = 3) -> list[tuple[str, float]]:
         candidates = []
@@ -1231,7 +1444,7 @@ class ReportGenerator:
 
         top_waste = wasted_summary["top_items"][0] if wasted_summary["top_items"] else "낭비 항목 없음"
         best_keyword = self._select_best_keywords(keyword_tables["last_7"]["rows"], limit=1)
-        best_text = self._short_label(best_keyword[0][0]) if best_keyword else "데이터 없음"
+        best_text = best_keyword[0][0] if best_keyword else "데이터 없음"
         pause_items = []
         wasted_items = search_terms["rows"] if search_terms["rows"] else [
             row for row in keyword_tables["last_7"]["rows"]
@@ -1239,15 +1452,14 @@ class ReportGenerator:
         ]
         for item in wasted_items[:2]:
             label = item.get("term") or item.get("keyword") or "낭비 항목"
-            pause_items.append(self._short_label(label))
+            pause_items.append(label)
         pause_text = ", ".join(pause_items) if pause_items else "없음"
 
         return [
             f"세션은 {format_delta(last_sessions, prev_sessions) or 'n/a'}, 활성 사용자는 {format_delta(last_active, prev_active) or 'n/a'} 변화했습니다.",
             f"광고비는 {format_delta(last_cost, prev_cost) or 'n/a'}, 전환은 {format_delta(last_conv, prev_conv) or 'n/a'}입니다.",
-            f"CPA는 {format_delta(last_cpa, prev_cpa) or 'n/a'}로 {'좋아짐' if last_cpa <= prev_cpa else '나빠짐'}.",
-            f"가장 큰 리스크: 전환 0 비용 상위 항목은 {top_waste}입니다.",
-            f"좋은 신호: 전환당 비용이 낮은 키워드는 {best_text}입니다.",
+            f"CPA는 {format_delta(last_cpa, prev_cpa) or 'n/a'}로 {'좋아짐' if last_cpa <= prev_cpa else '나빠짐'} 흐름입니다.",
+            f"가장 큰 리스크는 {top_waste}입니다.",
             f"이번 주 실행: Pause 후보 {pause_text}부터 정리하세요.",
         ]
 
@@ -1260,10 +1472,10 @@ class ReportGenerator:
         ]
 
     def _build_waste_actions(self, action_cards: list[dict], tables: dict) -> list[str]:
-        pause = action_cards[0]["desc"] if action_cards else "없음"
-        negative = action_cards[1]["desc"] if len(action_cards) > 1 else "없음"
+        pause = ", ".join(action_cards[0]["items_list"]) if action_cards else "없음"
+        negative = ", ".join(action_cards[1]["items_list"]) if len(action_cards) > 1 else "없음"
         landing = "데이터 없음"
-        landing_rows = tables.get("landing_pages", {}).get("rows", [])
+        landing_rows = tables.get("landing_pages_top", {}).get("rows", [])
         if landing_rows:
             landing = landing_rows[0][0]
         return [
@@ -1275,7 +1487,7 @@ class ReportGenerator:
     def _build_growth_notes(self, keyword_tables: dict) -> list[str]:
         best_keywords = self._select_best_keywords(keyword_tables["last_7"]["rows"], limit=3)
         best_text = ", ".join(
-            f"{self._short_label(name)}({format_currency(cpa)})" for name, cpa in best_keywords
+            f"{name}({format_currency(cpa)})" for name, cpa in best_keywords
         ) or "데이터 없음"
         return [
             "전환이 1건 이상인 키워드 중 CPA가 낮은 TOP10입니다.",
@@ -1297,9 +1509,9 @@ class ReportGenerator:
         exec_summary: dict,
         action_cards: list[dict],
     ) -> list[str]:
-        pause = action_cards[0]["desc"] if action_cards else "없음"
-        negative = action_cards[1]["desc"] if len(action_cards) > 1 else "없음"
-        growth = action_cards[2]["desc"] if len(action_cards) > 2 else "없음"
+        pause = ", ".join(action_cards[0]["items_list"]) if action_cards else "없음"
+        negative = ", ".join(action_cards[1]["items_list"]) if len(action_cards) > 1 else "없음"
+        growth = ", ".join(action_cards[2]["items_list"]) if len(action_cards) > 2 else "없음"
         return [
             exec_summary["lines"][0] if exec_summary["lines"] else "이번 주 요약을 만들 수 없습니다.",
             exec_summary["lines"][1] if len(exec_summary["lines"]) > 1 else "낭비 경고 데이터를 확인하세요.",
@@ -1331,7 +1543,7 @@ class ReportGenerator:
         top_sum = 0.0
         for item in wasted_items[:3]:
             label = item.get("term") or item.get("keyword") or "낭비 항목"
-            top_items.append(self._short_label(label))
+            top_items.append(label)
             top_sum += item["cost_micros"] / 1_000_000
         return {
             "start": search_terms["start"],
@@ -1509,7 +1721,7 @@ class ReportGenerator:
         ]
         for item in wasted_items[:3]:
             label = item.get("term") or item.get("keyword") or "낭비 항목"
-            pause_items.append(self._short_label(label))
+            pause_items.append(label)
         pause_line = "즉시 조치: Pause 후보 3개: " + (", ".join(pause_items) if pause_items else "없음")
 
         return {
@@ -1572,18 +1784,6 @@ class ReportGenerator:
                 "value_format": "percent",
             }
 
-        if geo_map.get("top10"):
-            labels = [self._wrap_label(row["country"], width=6, limit=14) for row in geo_map["top10"]]
-            values = [row["active"] for row in geo_map["top10"]]
-            specs["countries_top10"] = {
-                "type": "bar",
-                "title": "국가별 상위 10",
-                "labels": labels,
-                "values": values,
-                "has_data": True,
-                "value_format": "number",
-            }
-
         wasted_keywords = [
             row for row in keyword_tables["last_7"]["rows"]
             if row["conversions"] == 0 and row["cost_micros"] > 0
@@ -1593,7 +1793,7 @@ class ReportGenerator:
             specs["waste_keywords_top10"] = {
                 "type": "barh",
                 "title": "전환 0 키워드 비용 TOP 10",
-                "labels": [self._short_label(row["keyword"]) for row in wasted_keywords],
+                "labels": [self._wrap_label(row["keyword"], width=12) for row in wasted_keywords],
                 "values": [row["cost_micros"] / 1_000_000 for row in wasted_keywords],
                 "has_data": True,
                 "value_format": "currency",
@@ -1604,7 +1804,7 @@ class ReportGenerator:
             specs["waste_queries_top10"] = {
                 "type": "barh",
                 "title": "전환 0 검색어 비용 TOP 10",
-                "labels": [self._short_label(row["term"]) for row in wasted_queries],
+                "labels": [self._wrap_label(row["term"], width=12) for row in wasted_queries],
                 "values": [row["cost_micros"] / 1_000_000 for row in wasted_queries],
                 "has_data": True,
                 "value_format": "currency",
@@ -1622,7 +1822,7 @@ class ReportGenerator:
             specs["growth_keywords_cpa_top10"] = {
                 "type": "barh",
                 "title": "전환당 비용 낮은 키워드 TOP 10",
-                "labels": [self._short_label(row[0]) for row in top],
+                "labels": [self._wrap_label(row[0], width=12) for row in top],
                 "values": [row[1] for row in top],
                 "has_data": True,
                 "value_format": "currency",
@@ -1638,7 +1838,7 @@ class ReportGenerator:
             specs["growth_landing_cpa_top10"] = {
                 "type": "dual_bar",
                 "title": "랜딩페이지 전환/전환당 비용 TOP 10",
-                "labels": [self._short_label(row["url"]) for row in top],
+                "labels": [self._wrap_label(row["url"], width=12) for row in top],
                 "values_left": [row["conversions"] for row in top],
                 "values_right": [row["cost_micros"] / 1_000_000 / row["conversions"] for row in top],
                 "has_data": True,
@@ -1674,14 +1874,16 @@ class ReportGenerator:
         if weekday_stats:
             weekday_order = ["월", "화", "수", "목", "금", "토", "일"]
             values_map = {row["weekday"]: row["conversions"] for row in weekday_stats}
-            specs["weekday_conversions"] = {
-                "type": "bar",
-                "title": "요일별 전환",
-                "labels": weekday_order,
-                "values": [values_map.get(day, 0) for day in weekday_order],
-                "has_data": True,
-                "value_format": "number",
-            }
+            values = [values_map.get(day, 0) for day in weekday_order]
+            if sum(values) > 0:
+                specs["weekday_conversions"] = {
+                    "type": "bar",
+                    "title": "요일별 전환",
+                    "labels": weekday_order,
+                    "values": values,
+                    "has_data": True,
+                    "value_format": "number",
+                }
 
         if heatmap_stats.get("matrix"):
             total = sum(sum(row) for row in heatmap_stats["matrix"])
@@ -1702,10 +1904,10 @@ class ReportGenerator:
             ["sessions", "activeUsers"],
             start_date,
             end_date,
-            limit=100,
+            limit=10000,
         )
         landing_rows.sort(key=lambda x: x.get("sessions", 0), reverse=True)
-        landing_rows = landing_rows[:10]
+        landing_top = landing_rows[:10]
         top_landing = landing_rows[0] if landing_rows else None
 
         source_rows = self.ga4.run_report(
@@ -1713,10 +1915,10 @@ class ReportGenerator:
             ["sessions", "activeUsers"],
             start_date,
             end_date,
-            limit=200,
+            limit=10000,
         )
         source_rows.sort(key=lambda x: x.get("sessions", 0), reverse=True)
-        source_rows = source_rows[:10]
+        source_top = source_rows[:10]
 
         campaign_query = (
             "SELECT campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions "
@@ -1753,18 +1955,41 @@ class ReportGenerator:
         top_campaign = campaign_list[0] if campaign_list else None
 
         return {
-            "landing_pages": {
+            "landing_pages_top": {
                 "headers": ["랜딩페이지", "세션", "활성 사용자"],
                 "rows": [
                     [
-                        row.get("landingPagePlusQueryString", "")[:80],
+                        row.get("landingPagePlusQueryString", ""),
+                        format_int(row.get("sessions", 0)),
+                        format_int(row.get("activeUsers", 0)),
+                    ]
+                    for row in landing_top
+                ],
+            },
+            "landing_pages_all": {
+                "headers": ["랜딩페이지", "세션", "활성 사용자"],
+                "rows": [
+                    [
+                        row.get("landingPagePlusQueryString", ""),
                         format_int(row.get("sessions", 0)),
                         format_int(row.get("activeUsers", 0)),
                     ]
                     for row in landing_rows
                 ],
             },
-            "source_medium": {
+            "source_medium_top": {
+                "headers": ["소스", "미디엄", "세션", "활성 사용자"],
+                "rows": [
+                    [
+                        row.get("sessionSource", ""),
+                        row.get("sessionMedium", ""),
+                        format_int(row.get("sessions", 0)),
+                        format_int(row.get("activeUsers", 0)),
+                    ]
+                    for row in source_top
+                ],
+            },
+            "source_medium_all": {
                 "headers": ["소스", "미디엄", "세션", "활성 사용자"],
                 "rows": [
                     [
@@ -2160,6 +2385,7 @@ def build_render_context(
     extra_charts = {
         key: f"{chart_prefix}{filename}" for key, filename in report_data.get("extra_charts", {}).items()
     }
+    weekday_chart_path = f"{chart_prefix}weekday_conversions.png" if report_data.get("weekday_has_data") else None
     return {
         "report_title": REPORT_TITLE,
         "period_start": start_date,
@@ -2172,22 +2398,27 @@ def build_render_context(
         "logo_svg_path": logo_svg_path,
         "logo_url": logo_url,
         "ai_summary": report_data["ai_summary"],
-        "geo_map": report_data["geo_map"],
+        "geo_maps": report_data["geo_maps"],
         "keyword_tables": report_data["keyword_tables"],
         "search_terms": report_data["search_terms"],
         "wasted_summary": report_data["wasted_summary"],
         "conversion_definitions": report_data["conversion_definitions"],
         "exec_summary": report_data["exec_summary"],
         "today_line": report_data["today_line"],
-        "action_cards": report_data["action_cards"],
-        "fixed_top_sample": report_data["fixed_top_sample"],
-        "kpi_summary_lines": report_data["kpi_summary_lines"],
+        "yesterday_line": report_data["yesterday_line"],
+        "action_cards_by_range": report_data["action_cards_by_range"],
+        "top_strip": report_data["top_strip"],
+        "kpi_summary_by_range": report_data["kpi_summary_by_range"],
+        "kpi_by_range": report_data["kpi_by_range"],
+        "kpi_ranges": report_data["kpi_ranges"],
         "weekly_notes": report_data["weekly_notes"],
         "waste_notes": report_data["waste_notes"],
         "waste_actions": report_data["waste_actions"],
         "growth_notes": report_data["growth_notes"],
         "diagnostic_notes": report_data["diagnostic_notes"],
         "final_conclusion": report_data["final_conclusion"],
+        "weekday_has_data": report_data["weekday_has_data"],
+        "weekday_chart_path": weekday_chart_path,
         "extra_charts": extra_charts,
         "build_metadata": {
             "env": build_env,
@@ -2214,6 +2445,9 @@ def main():
     report_data = generator.collect_all_data()
 
     report_dir = Path(f"reports/{end_date}")
+    if report_dir.exists():
+        for png in report_dir.glob("*.png"):
+            png.unlink()
     generator.generate_charts(report_dir, report_data["charts"])
     report_data["extra_charts"] = generator.generate_extra_charts(report_dir, report_data.get("extra_chart_specs", {}))
 
