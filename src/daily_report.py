@@ -1134,6 +1134,8 @@ def build_render_context(
     start_date: str,
     end_date: str,
 ) -> dict:
+    build_env = os.getenv("BUILD_ENV", "local")
+    git_sha = os.getenv("GIT_SHA", "")[:7]
     charts = []
     for chart in report_data["charts"]:
         charts.append({
@@ -1158,6 +1160,11 @@ def build_render_context(
         "wasted_summary": report_data["wasted_summary"],
         "conversion_definitions": report_data["conversion_definitions"],
         "exec_summary": report_data["exec_summary"],
+        "build_metadata": {
+            "env": build_env,
+            "git_sha": git_sha,
+            "generated_at": datetime.now(ZoneInfo(TIMEZONE)).strftime("%Y-%m-%d %H:%M"),
+        },
     }
 
 

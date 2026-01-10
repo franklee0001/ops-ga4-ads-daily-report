@@ -63,6 +63,11 @@
       color: var(--muted);
     }
     .meta strong { color: var(--ink); }
+    .build-meta {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
     .section {
       margin-top: 28px;
       background: var(--surface);
@@ -237,6 +242,7 @@
       <div class="meta">
         <div><strong>생성 시각</strong> {{ generated_at }}</div>
         <div><strong>기준 시간대</strong> Asia/Seoul</div>
+        <div class="build-meta">빌드: {{ build_metadata.env }} / {{ build_metadata.git_sha }} / {{ build_metadata.generated_at }}</div>
       </div>
     </header>
 
