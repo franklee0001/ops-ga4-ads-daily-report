@@ -241,13 +241,21 @@
     </header>
 
     <section class="section">
-      <div class="section-title">AI 요약(규칙 기반)</div>
-      <div class="ai-summary">{{ ai_summary.text }}</div>
+      <div class="section-title">이번 주 결론</div>
+      <div class="ai-summary">기간: {{ exec_summary.range }}</div>
       <ul class="ai-insights">
-        {% for insight in ai_summary.insights %}
-        <li>{{ insight }}</li>
+        {% for line in exec_summary.lines %}
+        <li>{{ line }}</li>
         {% endfor %}
       </ul>
+    </section>
+
+    <section class="section">
+      <div class="section-title">낭비(전환 0) 요약 ({{ wasted_summary.start }} ~ {{ wasted_summary.end }})</div>
+      <div class="ai-summary">
+        전체 광고비 {{ wasted_summary.total_cost_display }} 중 낭비 비용 {{ wasted_summary.wasted_cost_display }} ({{ wasted_summary.wasted_share_display }})입니다.
+        <span class="note">기준: {{ wasted_summary.source }} (전환 0)</span>
+      </div>
     </section>
 
     <section class="section">
@@ -312,6 +320,150 @@
         {% endfor %}
       </div>
       <div class="note">기본 그래프는 최근 30일 기준이며, 전체기간 누적/평균 수치는 요약 섹션에 반영했습니다.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">키워드 TOP</div>
+      <div class="chart-title">최근 7일 비용 상위 키워드 ({{ keyword_tables.last_7.start }} ~ {{ keyword_tables.last_7.end }})</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for header in keyword_tables.last_7.top_cost.headers %}
+              <th>{{ header }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in keyword_tables.last_7.top_cost.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="chart-title">최근 7일 낭비 키워드 (전환 0, 비용 상위)</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for header in keyword_tables.last_7.wasted.headers %}
+              <th>{{ header }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in keyword_tables.last_7.wasted.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="chart-title">최근 30일 비용 상위 키워드 ({{ keyword_tables.last_30.start }} ~ {{ keyword_tables.last_30.end }})</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for header in keyword_tables.last_30.top_cost.headers %}
+              <th>{{ header }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in keyword_tables.last_30.top_cost.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">검색어(유입 쿼리) 낭비 TOP ({{ search_terms.start }} ~ {{ search_terms.end }})</div>
+      {% if search_terms.table.rows %}
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for header in search_terms.table.headers %}
+              <th>{{ header }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in search_terms.table.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-state">낭비 검색어 데이터가 없습니다.</div>
+      {% endif %}
+    </section>
+
+    <section class="section">
+      <div class="section-title">전환 정의(전환 액션 목록)</div>
+      <div class="chart-title">현재 활성 전환 액션</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for header in conversion_definitions.actions.headers %}
+              <th>{{ header }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in conversion_definitions.actions.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="divider"></div>
+      <div class="chart-title">최근 30일 전환 액션별 성과</div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              {% for header in conversion_definitions.performance.headers %}
+              <th>{{ header }}</th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in conversion_definitions.performance.rows %}
+            <tr>
+              {% for cell in row %}
+              <td>{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <section class="section">
@@ -393,15 +545,15 @@
     <div class="footer-space"></div>
 
     <section class="section">
-      <div class="section-title">KPI/전환 정의</div>
+      <div class="section-title">지표/전환 정의</div>
       <div class="glossary">
         <div>세션: 사용자가 사이트에 방문해 활동한 한 번의 방문 묶음입니다.</div>
         <div>활성 사용자: 해당 기간에 실제로 사이트에서 활동한 고유 사용자 수입니다.</div>
         <div>전환: Google Ads 계정에서 설정된 전환 액션 기준으로 집계됩니다.</div>
-        <div>CTR: 클릭률로, 클릭 ÷ 노출 × 100입니다.</div>
-        <div>CPC: 클릭당 비용으로, 광고비 ÷ 클릭입니다.</div>
-        <div>CPA: 전환당 비용으로, 광고비 ÷ 전환입니다.</div>
-        <div>ROAS: 광고수익률로, 전환 가치 ÷ 광고비입니다.</div>
+        <div>클릭률: 클릭 ÷ 노출 × 100입니다.</div>
+        <div>클릭당 비용: 광고비 ÷ 클릭입니다.</div>
+        <div>전환당 비용: 광고비 ÷ 전환입니다.</div>
+        <div>광고 수익률: 전환 가치 ÷ 광고비입니다.</div>
       </div>
     </section>
 

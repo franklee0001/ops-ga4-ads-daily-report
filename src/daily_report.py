@@ -4,6 +4,7 @@ HueLight GA4/Google Ads 일일 리포트 생성기
 
 import json
 import os
+import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -22,8 +23,14 @@ from matplotlib.ticker import FuncFormatter
 from matplotlib import font_manager
 
 
-def configure_korean_font():
-    preferred_fonts = [
+def set_korean_font():
+    preferred_fonts = []
+    if sys.platform == "darwin":
+        preferred_fonts.extend(["AppleGothic", "Apple SD Gothic Neo"])
+    elif sys.platform.startswith("linux"):
+        preferred_fonts.extend(["Noto Sans CJK KR", "NanumGothic"])
+
+    preferred_fonts.extend([
         "Apple SD Gothic Neo",
         "AppleGothic",
         "Noto Sans CJK KR",
@@ -31,7 +38,8 @@ def configure_korean_font():
         "NanumGothic",
         "Malgun Gothic",
         "DejaVu Sans",
-    ]
+    ])
+
     available = {font.name for font in font_manager.fontManager.ttflist}
     chosen = next((name for name in preferred_fonts if name in available), None)
     if chosen:
@@ -39,7 +47,7 @@ def configure_korean_font():
     plt.rcParams["axes.unicode_minus"] = False
 
 
-configure_korean_font()
+set_korean_font()
 
 GA4_SCOPES = ["https://www.googleapis.com/auth/analytics.readonly"]
 GA4_CREDENTIALS_PATH = ".secrets/ga4.json"
@@ -160,6 +168,9 @@ class ReportGenerator:
         last_7_end = end - timedelta(days=1)
         last_7_start = max(start, last_7_end - timedelta(days=6))
         last_7_dates = safe_date_range(last_7_start, last_7_end)
+        last_30_end = end - timedelta(days=1)
+        last_30_complete_start = max(start, last_30_end - timedelta(days=29))
+        last_30_complete_dates = safe_date_range(last_30_complete_start, last_30_end)
         prev_7_end = last_7_start - timedelta(days=1)
         prev_7_start = max(start, prev_7_end - timedelta(days=6))
         prev_7_dates = safe_date_range(prev_7_start, prev_7_end) if last_7_dates else []
@@ -185,6 +196,18 @@ class ReportGenerator:
             "total_active": 0,
             "total_active_display": format_int(0),
         }
+        keyword_tables = self._get_ads_keyword_tables(last_7_start, last_7_end, last_30_complete_start, last_30_end)
+        search_terms = self._get_ads_search_term_waste(last_7_start, last_7_end)
+        wasted_summary = self._build_wasted_summary(last_7_dates, ads_daily, keyword_tables, search_terms)
+        conversion_definitions = self._get_conversion_definitions(last_30_complete_start, last_30_end)
+        exec_summary = self._build_executive_summary(
+            last_7_start,
+            last_7_end,
+            wasted_summary,
+            keyword_tables,
+            search_terms,
+            tables.get("campaigns_raw"),
+        )
 
         return {
             "summary": summary,
@@ -192,6 +215,11 @@ class ReportGenerator:
             "charts": self._build_chart_data(ga4_daily, ads_daily, last_30_dates, ga4_has_data, ads_has_data),
             "ai_summary": ai_summary,
             "geo_map": geo_map,
+            "keyword_tables": keyword_tables,
+            "search_terms": search_terms,
+            "wasted_summary": wasted_summary,
+            "conversion_definitions": conversion_definitions,
+            "exec_summary": exec_summary,
         }
 
     def _get_ga4_daily_series(self, start_date: str, end_date: str, all_dates: list[str]) -> tuple[dict, bool]:
@@ -491,7 +519,7 @@ class ReportGenerator:
             total_active += active_users
             data_rows.append([country, active_users])
         data_rows.sort(key=lambda x: x[1], reverse=True)
-        chart_data = [["Country", "Active Users"]] + data_rows
+        chart_data = [["국가", "활성 사용자"]] + data_rows
         return {
             "has_data": bool(data_rows),
             "chart_json": json.dumps(chart_data, ensure_ascii=False),
@@ -499,6 +527,350 @@ class ReportGenerator:
             "end": end,
             "total_active": total_active,
             "total_active_display": format_int(total_active),
+        }
+
+    def _get_ads_keyword_rows(self, start_date: date, end_date: date) -> list[dict]:
+        if start_date > end_date:
+            return []
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        query = (
+            "SELECT campaign.name, ad_group.name, ad_group_criterion.keyword.text, "
+            "ad_group_criterion.keyword.match_type, metrics.impressions, metrics.clicks, "
+            "metrics.ctr, metrics.average_cpc, metrics.cost_micros, metrics.conversions, "
+            "metrics.cost_per_conversion "
+            "FROM keyword_view "
+            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
+            "AND campaign.advertising_channel_type = 'SEARCH' "
+            "AND ad_group_criterion.status != 'REMOVED'"
+        )
+        rows = self.ads.run_query(query)
+        results = []
+        for row in rows:
+            keyword = row.ad_group_criterion.keyword
+            match_type = str(keyword.match_type)
+            results.append({
+                "campaign": row.campaign.name,
+                "ad_group": row.ad_group.name,
+                "keyword": keyword.text,
+                "match_type": match_type,
+                "impressions": row.metrics.impressions,
+                "clicks": row.metrics.clicks,
+                "ctr": row.metrics.ctr,
+                "avg_cpc_micros": row.metrics.average_cpc,
+                "cost_micros": row.metrics.cost_micros,
+                "conversions": row.metrics.conversions,
+                "cpa_micros": row.metrics.cost_per_conversion,
+            })
+        return results
+
+    def _format_match_type(self, match_type: str) -> str:
+        mapping = {
+            "BROAD": "확장",
+            "PHRASE": "구문",
+            "EXACT": "일치",
+        }
+        return mapping.get(match_type, "기타")
+
+    def _format_keyword_table(self, rows: list[dict]) -> dict:
+        headers = [
+            "캠페인",
+            "광고그룹",
+            "키워드",
+            "매칭",
+            "노출",
+            "클릭",
+            "클릭률",
+            "클릭당 비용",
+            "비용",
+            "전환",
+            "전환율",
+            "전환당 비용",
+        ]
+        table_rows = []
+        for row in rows:
+            cost = row["cost_micros"] / 1_000_000
+            conversions = row["conversions"]
+            ctr = row["ctr"] * 100 if row["ctr"] else safe_div(row["clicks"], row["impressions"]) * 100
+            avg_cpc = row["avg_cpc_micros"] / 1_000_000 if row["avg_cpc_micros"] else safe_div(cost, row["clicks"])
+            cpa = row["cpa_micros"] / 1_000_000 if row["cpa_micros"] else safe_div(cost, conversions)
+            conv_rate = safe_div(conversions, row["clicks"]) * 100
+            table_rows.append([
+                row["campaign"],
+                row["ad_group"],
+                row["keyword"],
+                self._format_match_type(row["match_type"]),
+                format_int(row["impressions"]),
+                format_int(row["clicks"]),
+                f"{format_float(ctr, 2)}%",
+                format_currency(avg_cpc),
+                format_currency(cost),
+                format_float(conversions, 1),
+                f"{format_float(conv_rate, 2)}%",
+                format_currency(cpa) if conversions else "-",
+            ])
+        return {"headers": headers, "rows": table_rows}
+
+    def _get_ads_keyword_tables(
+        self,
+        last_7_start: date,
+        last_7_end: date,
+        last_30_start: date,
+        last_30_end: date,
+    ) -> dict:
+        rows_7 = self._get_ads_keyword_rows(last_7_start, last_7_end)
+        rows_30 = self._get_ads_keyword_rows(last_30_start, last_30_end)
+
+        rows_7_sorted = sorted(rows_7, key=lambda r: r["cost_micros"], reverse=True)[:20]
+        rows_30_sorted = sorted(rows_30, key=lambda r: r["cost_micros"], reverse=True)[:20]
+        wasted_7 = [r for r in rows_7 if r["conversions"] == 0 and r["cost_micros"] > 0]
+        wasted_7_sorted = sorted(wasted_7, key=lambda r: r["cost_micros"], reverse=True)[:20]
+
+        return {
+            "last_7": {
+                "start": last_7_start.isoformat(),
+                "end": last_7_end.isoformat(),
+                "top_cost": self._format_keyword_table(rows_7_sorted),
+                "wasted": self._format_keyword_table(wasted_7_sorted),
+                "rows": rows_7,
+            },
+            "last_30": {
+                "start": last_30_start.isoformat(),
+                "end": last_30_end.isoformat(),
+                "top_cost": self._format_keyword_table(rows_30_sorted),
+                "rows": rows_30,
+            },
+        }
+
+    def _get_ads_search_term_waste(self, start_date: date, end_date: date) -> dict:
+        if start_date > end_date:
+            return {"start": start_date.isoformat(), "end": end_date.isoformat(), "rows": [], "table": {"headers": [], "rows": []}}
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        query = (
+            "SELECT campaign.name, ad_group.name, search_term_view.search_term, "
+            "metrics.clicks, metrics.cost_micros, metrics.conversions, metrics.cost_per_conversion "
+            "FROM search_term_view "
+            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
+            "AND campaign.advertising_channel_type = 'SEARCH' "
+            "AND metrics.conversions = 0 "
+            "AND metrics.cost_micros > 0"
+        )
+        rows = self.ads.run_query(query)
+        results = []
+        for row in rows:
+            results.append({
+                "campaign": row.campaign.name,
+                "ad_group": row.ad_group.name,
+                "term": row.search_term_view.search_term,
+                "clicks": row.metrics.clicks,
+                "cost_micros": row.metrics.cost_micros,
+                "conversions": row.metrics.conversions,
+                "cpa_micros": row.metrics.cost_per_conversion,
+            })
+        results_sorted = sorted(results, key=lambda r: r["cost_micros"], reverse=True)[:20]
+        table_rows = []
+        for row in results_sorted:
+            cost = row["cost_micros"] / 1_000_000
+            cpa = row["cpa_micros"] / 1_000_000 if row["cpa_micros"] else safe_div(cost, row["conversions"])
+            table_rows.append([
+                row["campaign"],
+                row["ad_group"],
+                row["term"],
+                format_int(row["clicks"]),
+                format_currency(cost),
+                format_float(row["conversions"], 1),
+                format_currency(cpa) if row["conversions"] else "-",
+            ])
+        return {
+            "start": start,
+            "end": end,
+            "rows": results,
+            "table": {
+                "headers": ["캠페인", "광고그룹", "검색어", "클릭", "비용", "전환", "전환당 비용"],
+                "rows": table_rows,
+            },
+        }
+
+    def _build_wasted_summary(self, last_7_dates: list[str], ads_daily: dict, keyword_tables: dict, search_terms: dict) -> dict:
+        total_cost = sum(ads_daily[d]["cost"] for d in last_7_dates) if last_7_dates else 0.0
+        wasted_cost = 0.0
+        source = "검색어"
+        if search_terms["rows"]:
+            wasted_cost = sum(row["cost_micros"] for row in search_terms["rows"]) / 1_000_000
+        else:
+            source = "키워드"
+            wasted_rows = keyword_tables["last_7"]["rows"]
+            wasted_cost = sum(row["cost_micros"] for row in wasted_rows if row["conversions"] == 0 and row["cost_micros"] > 0) / 1_000_000
+
+        wasted_share = safe_div(wasted_cost, total_cost) * 100 if total_cost else 0.0
+        return {
+            "start": search_terms["start"],
+            "end": search_terms["end"],
+            "total_cost": total_cost,
+            "wasted_cost": wasted_cost,
+            "wasted_share": wasted_share,
+            "source": source,
+            "total_cost_display": format_currency(total_cost),
+            "wasted_cost_display": format_currency(wasted_cost),
+            "wasted_share_display": f"{format_float(wasted_share, 1)}%",
+        }
+
+    def _get_conversion_definitions(self, start_date: date, end_date: date) -> dict:
+        def format_type(value: str) -> str:
+            mapping = {
+                "WEBPAGE": "웹페이지",
+                "UPLOAD_CLICKS": "오프라인 클릭",
+                "UPLOAD_CALLS": "오프라인 전화",
+                "UPLOAD_CALLS_CONVERSION": "오프라인 전화 전환",
+                "APP_DOWNLOAD": "앱 다운로드",
+                "APP_INSTALLS": "앱 설치",
+                "APP_IN_APP_ACTION": "앱 내 전환",
+                "PHONE_CALL_LEAD": "전화 리드",
+                "SUBMIT_LEAD_FORM": "리드 폼 제출",
+                "STORE_VISITS": "매장 방문",
+                "IMPORT": "가져오기",
+            }
+            return mapping.get(value, "기타")
+
+        def format_category(value: str) -> str:
+            mapping = {
+                "DEFAULT": "기본",
+                "PURCHASE": "구매",
+                "SUBMIT_LEAD_FORM": "리드",
+                "CONTACT": "문의",
+                "PAGE_VIEW": "페이지뷰",
+                "SIGNUP": "가입",
+                "DOWNLOAD": "다운로드",
+                "ADD_TO_CART": "장바구니",
+                "BEGIN_CHECKOUT": "결제 시작",
+                "SUBSCRIBE": "구독",
+            }
+            return mapping.get(value, "기타")
+
+        actions_query = (
+            "SELECT conversion_action.name, conversion_action.type, conversion_action.category, "
+            "conversion_action.status, conversion_action.primary_for_goal "
+            "FROM conversion_action "
+            "WHERE conversion_action.status = 'ENABLED'"
+        )
+        action_rows = self.ads.run_query(actions_query)
+        actions = []
+        for row in action_rows:
+            action = row.conversion_action
+            actions.append({
+                "name": action.name,
+                "type": format_type(str(action.type)),
+                "category": format_category(str(action.category)),
+                "status": "사용",
+                "primary": "예" if action.primary_for_goal else "아니오",
+            })
+
+        conversions_query = (
+            "SELECT segments.conversion_action_name, metrics.conversions "
+            "FROM customer "
+            f"WHERE segments.date BETWEEN '{start_date.isoformat()}' AND '{end_date.isoformat()}'"
+        )
+        conversions_fallback = (
+            "SELECT segments.conversion_action_name, metrics.conversions "
+            "FROM campaign "
+            f"WHERE segments.date BETWEEN '{start_date.isoformat()}' AND '{end_date.isoformat()}' "
+            "AND campaign.status != 'REMOVED'"
+        )
+        conversion_rows = self.ads.run_query(conversions_query, fallback_query=conversions_fallback)
+        conv_by_action = {}
+        for row in conversion_rows:
+            name = row.segments.conversion_action_name
+            if not name:
+                continue
+            if name not in conv_by_action:
+                conv_by_action[name] = {"conversions": 0.0}
+            conv_by_action[name]["conversions"] += row.metrics.conversions
+
+        conv_rows = []
+        for name, data in conv_by_action.items():
+            conv_rows.append({
+                "name": name,
+                "conversions": data["conversions"],
+            })
+        conv_rows.sort(key=lambda r: r["conversions"], reverse=True)
+        conv_table_rows = [
+            [
+                row["name"],
+                format_float(row["conversions"], 1),
+            ]
+            for row in conv_rows[:20]
+        ]
+
+        return {
+            "actions": {
+                "headers": ["전환 액션", "유형", "카테고리", "상태", "기본 목표"],
+                "rows": [
+                    [action["name"], action["type"], action["category"], action["status"], action["primary"]]
+                    for action in actions
+                ],
+            },
+            "performance": {
+                "headers": ["전환 액션", "전환"],
+                "rows": conv_table_rows,
+            },
+        }
+
+    def _build_executive_summary(
+        self,
+        start_date: date,
+        end_date: date,
+        wasted_summary: dict,
+        keyword_tables: dict,
+        search_terms: dict,
+        campaigns_raw: list[dict] | None,
+    ) -> dict:
+        date_range = f"{start_date.isoformat()} ~ {end_date.isoformat()}"
+        wasted_line = (
+            f"낭비 비용 {wasted_summary['wasted_cost_display']} "
+            f"(전체 광고비 {wasted_summary['total_cost_display']} 중 {wasted_summary['wasted_share_display']})."
+        )
+
+        action_items = []
+        wasted_items = search_terms["rows"] if search_terms["rows"] else [
+            row for row in keyword_tables["last_7"]["rows"] if row["conversions"] == 0 and row["cost_micros"] > 0
+        ]
+        for item in wasted_items[:2]:
+            label = item.get("term") or item.get("keyword") or "상위 낭비 항목"
+            action_items.append(f"'{label}' 제외/정제")
+        action_line = "즉시 조치: " + (", ".join(action_items) if action_items else "낭비 항목이 없습니다.")
+
+        best_keyword = None
+        for row in keyword_tables["last_7"]["rows"]:
+            if row["conversions"] > 0:
+                cost = row["cost_micros"] / 1_000_000
+                cpa = safe_div(cost, row["conversions"])
+                if best_keyword is None or cpa < best_keyword["cpa"]:
+                    best_keyword = {"keyword": row["keyword"], "cpa": cpa}
+
+        best_campaign = None
+        if campaigns_raw:
+            for row in campaigns_raw:
+                if row["conversions"] > 0:
+                    if best_campaign is None or row["cpa"] < best_campaign["cpa"]:
+                        best_campaign = {"campaign": row["campaign"], "cpa": row["cpa"]}
+
+        opportunity = "기회: "
+        parts = []
+        if best_keyword:
+            parts.append(f"키워드 '{best_keyword['keyword']}' 전환당 비용 {format_currency(best_keyword['cpa'])}")
+        if best_campaign:
+            parts.append(f"캠페인 '{best_campaign['campaign']}' 전환당 비용 {format_currency(best_campaign['cpa'])}")
+        opportunity += ", ".join(parts) if parts else "전환이 있는 키워드/캠페인이 없습니다."
+
+        return {
+            "range": date_range,
+            "lines": [
+                f"이번 주 결론({date_range}): 비용 대비 전환 성과를 점검해야 합니다.",
+                wasted_line,
+                action_line,
+                opportunity,
+            ],
         }
 
     def _build_tables(self, start_date: str, end_date: str) -> dict:
@@ -599,6 +971,7 @@ class ReportGenerator:
             },
             "top_landing": top_landing,
             "top_campaign": top_campaign,
+            "campaigns_raw": campaign_list,
         }
 
     def _build_chart_data(
@@ -780,6 +1153,11 @@ def build_render_context(
         "logo_url": logo_url,
         "ai_summary": report_data["ai_summary"],
         "geo_map": report_data["geo_map"],
+        "keyword_tables": report_data["keyword_tables"],
+        "search_terms": report_data["search_terms"],
+        "wasted_summary": report_data["wasted_summary"],
+        "conversion_definitions": report_data["conversion_definitions"],
+        "exec_summary": report_data["exec_summary"],
     }
 
 
