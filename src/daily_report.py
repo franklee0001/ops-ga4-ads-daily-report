@@ -201,12 +201,13 @@ class ReportGenerator:
         wasted_summary = self._build_wasted_summary(last_7_dates, ads_daily, keyword_tables, search_terms)
         conversion_definitions = self._get_conversion_definitions(last_30_complete_start, last_30_end)
         exec_summary = self._build_executive_summary(
-            last_7_start,
-            last_7_end,
+            last_7_dates,
+            prev_7_dates,
+            ga4_daily,
+            ads_daily,
             wasted_summary,
             keyword_tables,
             search_terms,
-            tables.get("campaigns_raw"),
         )
 
         return {
@@ -280,7 +281,14 @@ class ReportGenerator:
                 data[date_key]["conversion_value"] += conv_value
         return data, bool(rows), has_conv_value
 
-    def _build_summary(self, ga4_daily: dict, ads_daily: dict, last_30_dates: list[str], all_dates: list[str], has_conv_value: bool) -> dict:
+    def _build_summary(
+        self,
+        ga4_daily: dict,
+        ads_daily: dict,
+        last_30_dates: list[str],
+        all_dates: list[str],
+        has_conv_value: bool,
+    ) -> dict:
         def sum_series(dates: list[str]) -> dict:
             return {
                 "ga4_sessions": sum(ga4_daily[d]["sessions"] for d in dates),
@@ -293,6 +301,17 @@ class ReportGenerator:
             }
 
         today_key = self.end_date
+        yesterday_key = (datetime.strptime(self.end_date, "%Y-%m-%d").date() - timedelta(days=1)).isoformat()
+
+        yesterday_ga4 = ga4_daily.get(yesterday_key, {"sessions": 0, "activeUsers": 0})
+        yesterday_ads = ads_daily.get(yesterday_key, {
+            "cost": 0.0,
+            "impressions": 0,
+            "clicks": 0,
+            "conversions": 0.0,
+            "conversion_value": 0.0,
+        })
+
         today_ga4 = ga4_daily.get(today_key, {"sessions": 0, "activeUsers": 0})
         today_ads = ads_daily.get(today_key, {
             "cost": 0.0,
@@ -301,6 +320,19 @@ class ReportGenerator:
             "conversions": 0.0,
             "conversion_value": 0.0,
         })
+
+        yesterday_metrics = {
+            "ga4_sessions": yesterday_ga4["sessions"],
+            "ga4_active_users": yesterday_ga4["activeUsers"],
+            "ads_cost": yesterday_ads["cost"],
+            "ads_impressions": yesterday_ads["impressions"],
+            "ads_clicks": yesterday_ads["clicks"],
+            "ads_conversions": yesterday_ads["conversions"],
+            "ads_ctr": safe_div(yesterday_ads["clicks"], yesterday_ads["impressions"]) * 100,
+            "ads_cpc": safe_div(yesterday_ads["cost"], yesterday_ads["clicks"]),
+            "ads_cpa": safe_div(yesterday_ads["cost"], yesterday_ads["conversions"]),
+            "ads_roas": safe_div(yesterday_ads["conversion_value"], yesterday_ads["cost"]) if has_conv_value else None,
+        }
 
         today_metrics = {
             "ga4_sessions": today_ga4["sessions"],
@@ -331,15 +363,18 @@ class ReportGenerator:
             safe_div(all_totals["ads_conversion_value"], all_totals["ads_cost"]) if has_conv_value else None
         )
 
+        yesterday_cards = self._format_cards(yesterday_metrics, has_conv_value)
         today_cards = self._format_cards(today_metrics, has_conv_value)
         last_30_cards = self._format_cards(last_30_totals, has_conv_value)
         all_time_cards = self._format_cards(all_totals, has_conv_value, include_avg=True, days=len(all_dates))
 
         return {
+            "yesterday_cards": yesterday_cards,
             "today_cards": today_cards,
             "last_30_cards": last_30_cards,
             "all_time_cards": all_time_cards,
             "total_days": len(all_dates),
+            "yesterday_date": yesterday_key,
         }
 
     def _format_cards(self, metrics: dict, has_conv_value: bool, include_avg: bool = False, days: int = 1) -> list[dict]:
@@ -611,6 +646,34 @@ class ReportGenerator:
             ])
         return {"headers": headers, "rows": table_rows}
 
+    def _format_keyword_waste_table(self, rows: list[dict]) -> dict:
+        headers = [
+            "캠페인",
+            "광고그룹",
+            "키워드",
+            "매칭",
+            "비용",
+            "클릭",
+            "클릭률",
+            "클릭당 비용",
+        ]
+        table_rows = []
+        for row in rows:
+            cost = row["cost_micros"] / 1_000_000
+            ctr = row["ctr"] * 100 if row["ctr"] else safe_div(row["clicks"], row["impressions"]) * 100
+            avg_cpc = row["avg_cpc_micros"] / 1_000_000 if row["avg_cpc_micros"] else safe_div(cost, row["clicks"])
+            table_rows.append([
+                row["campaign"],
+                row["ad_group"],
+                row["keyword"],
+                self._format_match_type(row["match_type"]),
+                format_currency(cost),
+                format_int(row["clicks"]),
+                f"{format_float(ctr, 2)}%",
+                format_currency(avg_cpc),
+            ])
+        return {"headers": headers, "rows": table_rows}
+
     def _get_ads_keyword_tables(
         self,
         last_7_start: date,
@@ -631,7 +694,7 @@ class ReportGenerator:
                 "start": last_7_start.isoformat(),
                 "end": last_7_end.isoformat(),
                 "top_cost": self._format_keyword_table(rows_7_sorted),
-                "wasted": self._format_keyword_table(wasted_7_sorted),
+                "wasted": self._format_keyword_waste_table(wasted_7_sorted),
                 "rows": rows_7,
             },
             "last_30": {
@@ -696,14 +759,31 @@ class ReportGenerator:
         total_cost = sum(ads_daily[d]["cost"] for d in last_7_dates) if last_7_dates else 0.0
         wasted_cost = 0.0
         source = "검색어"
+        wasted_items = []
         if search_terms["rows"]:
-            wasted_cost = sum(row["cost_micros"] for row in search_terms["rows"]) / 1_000_000
+            wasted_items = sorted(search_terms["rows"], key=lambda r: r["cost_micros"], reverse=True)
+            wasted_cost = sum(row["cost_micros"] for row in wasted_items) / 1_000_000
         else:
             source = "키워드"
-            wasted_rows = keyword_tables["last_7"]["rows"]
-            wasted_cost = sum(row["cost_micros"] for row in wasted_rows if row["conversions"] == 0 and row["cost_micros"] > 0) / 1_000_000
+            wasted_items = [
+                row for row in keyword_tables["last_7"]["rows"]
+                if row["conversions"] == 0 and row["cost_micros"] > 0
+            ]
+            wasted_items = sorted(wasted_items, key=lambda r: r["cost_micros"], reverse=True)
+            wasted_cost = sum(row["cost_micros"] for row in wasted_items) / 1_000_000
 
         wasted_share = safe_div(wasted_cost, total_cost) * 100 if total_cost else 0.0
+        top_items = []
+        top_sum = 0.0
+        def short_label(value: str) -> str:
+            if len(value) <= 20:
+                return value
+            return f"{value[:20]}…"
+
+        for item in wasted_items[:3]:
+            label = item.get("term") or item.get("keyword") or "낭비 항목"
+            top_items.append(short_label(label))
+            top_sum += item["cost_micros"] / 1_000_000
         return {
             "start": search_terms["start"],
             "end": search_terms["end"],
@@ -714,6 +794,9 @@ class ReportGenerator:
             "total_cost_display": format_currency(total_cost),
             "wasted_cost_display": format_currency(wasted_cost),
             "wasted_share_display": f"{format_float(wasted_share, 1)}%",
+            "top_items": top_items,
+            "top_sum_display": format_currency(top_sum),
+            "top_count": len(top_items),
         }
 
     def _get_conversion_definitions(self, start_date: date, end_date: date) -> dict:
@@ -818,59 +901,71 @@ class ReportGenerator:
 
     def _build_executive_summary(
         self,
-        start_date: date,
-        end_date: date,
+        last_7_dates: list[str],
+        prev_7_dates: list[str],
+        ga4_daily: dict,
+        ads_daily: dict,
         wasted_summary: dict,
         keyword_tables: dict,
         search_terms: dict,
-        campaigns_raw: list[dict] | None,
     ) -> dict:
-        date_range = f"{start_date.isoformat()} ~ {end_date.isoformat()}"
-        wasted_line = (
-            f"낭비 비용 {wasted_summary['wasted_cost_display']} "
-            f"(전체 광고비 {wasted_summary['total_cost_display']} 중 {wasted_summary['wasted_share_display']})."
+        if not last_7_dates:
+            date_range = "- ~ -"
+        else:
+            date_range = f"{last_7_dates[0]} ~ {last_7_dates[-1]}"
+
+        def sum_ga4(dates: list[str]) -> tuple[float, float]:
+            sessions = sum(ga4_daily[d]["sessions"] for d in dates) if dates else 0
+            active = sum(ga4_daily[d]["activeUsers"] for d in dates) if dates else 0
+            return sessions, active
+
+        def sum_ads(dates: list[str]) -> tuple[float, float]:
+            cost = sum(ads_daily[d]["cost"] for d in dates) if dates else 0.0
+            conversions = sum(ads_daily[d]["conversions"] for d in dates) if dates else 0.0
+            return cost, conversions
+
+        def delta_pct(current: float, prev: float) -> str:
+            if prev <= 0:
+                return "n/a"
+            delta = (current - prev) / prev * 100
+            sign = "+" if delta >= 0 else ""
+            return f"{sign}{delta:.0f}%"
+
+        last_sessions, last_active = sum_ga4(last_7_dates)
+        prev_sessions, prev_active = sum_ga4(prev_7_dates)
+        last_cost, last_conversions = sum_ads(last_7_dates)
+        prev_cost, prev_conversions = sum_ads(prev_7_dates)
+        last_cpa = safe_div(last_cost, last_conversions)
+        prev_cpa = safe_div(prev_cost, prev_conversions)
+
+        change_line = (
+            f"지난 7일 vs 전주: 세션 {delta_pct(last_sessions, prev_sessions)}, "
+            f"활성 {delta_pct(last_active, prev_active)}, "
+            f"비용 {delta_pct(last_cost, prev_cost)}, "
+            f"전환 {delta_pct(last_conversions, prev_conversions)}, "
+            f"전환당 비용 {delta_pct(last_cpa, prev_cpa)}"
         )
 
-        action_items = []
+        wasted_count = wasted_summary["top_count"]
+        wasted_sum_line = (
+            f"낭비 경고: 전환 0 비용 TOP {wasted_count}개 합계 {wasted_summary['top_sum_display']}"
+            if wasted_count
+            else "낭비 경고: 전환 0 비용 항목이 없습니다."
+        )
+
+        pause_items = []
         wasted_items = search_terms["rows"] if search_terms["rows"] else [
-            row for row in keyword_tables["last_7"]["rows"] if row["conversions"] == 0 and row["cost_micros"] > 0
+            row for row in keyword_tables["last_7"]["rows"]
+            if row["conversions"] == 0 and row["cost_micros"] > 0
         ]
-        for item in wasted_items[:2]:
-            label = item.get("term") or item.get("keyword") or "상위 낭비 항목"
-            action_items.append(f"'{label}' 제외/정제")
-        action_line = "즉시 조치: " + (", ".join(action_items) if action_items else "낭비 항목이 없습니다.")
-
-        best_keyword = None
-        for row in keyword_tables["last_7"]["rows"]:
-            if row["conversions"] > 0:
-                cost = row["cost_micros"] / 1_000_000
-                cpa = safe_div(cost, row["conversions"])
-                if best_keyword is None or cpa < best_keyword["cpa"]:
-                    best_keyword = {"keyword": row["keyword"], "cpa": cpa}
-
-        best_campaign = None
-        if campaigns_raw:
-            for row in campaigns_raw:
-                if row["conversions"] > 0:
-                    if best_campaign is None or row["cpa"] < best_campaign["cpa"]:
-                        best_campaign = {"campaign": row["campaign"], "cpa": row["cpa"]}
-
-        opportunity = "기회: "
-        parts = []
-        if best_keyword:
-            parts.append(f"키워드 '{best_keyword['keyword']}' 전환당 비용 {format_currency(best_keyword['cpa'])}")
-        if best_campaign:
-            parts.append(f"캠페인 '{best_campaign['campaign']}' 전환당 비용 {format_currency(best_campaign['cpa'])}")
-        opportunity += ", ".join(parts) if parts else "전환이 있는 키워드/캠페인이 없습니다."
+        for item in wasted_items[:3]:
+            label = item.get("term") or item.get("keyword") or "낭비 항목"
+            pause_items.append(label[:20] + "…" if len(label) > 20 else label)
+        pause_line = "즉시 조치: Pause 후보 3개: " + (", ".join(pause_items) if pause_items else "없음")
 
         return {
             "range": date_range,
-            "lines": [
-                f"이번 주 결론({date_range}): 비용 대비 전환 성과를 점검해야 합니다.",
-                wasted_line,
-                action_line,
-                opportunity,
-            ],
+            "lines": [change_line, wasted_sum_line, pause_line],
         }
 
     def _build_tables(self, start_date: str, end_date: str) -> dict:

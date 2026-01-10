@@ -97,11 +97,20 @@
       gap: 14px;
       margin-bottom: 18px;
     }
+    .summary-grid.compact {
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    }
     .kpi-card {
       border: 1px solid var(--line);
       border-radius: 14px;
       padding: 16px;
       background: linear-gradient(180deg, rgba(37, 99, 235, 0.04) 0%, rgba(255, 255, 255, 0.4) 100%);
+    }
+    .kpi-card.small {
+      padding: 12px;
+    }
+    .kpi-card.small .kpi-value {
+      font-size: 18px;
     }
     .kpi-label {
       font-size: 12px;
@@ -256,31 +265,24 @@
       </ul>
     </section>
 
-    <section class="section">
-      <div class="section-title">낭비(전환 0) 요약 ({{ wasted_summary.start }} ~ {{ wasted_summary.end }})</div>
-      <div class="ai-summary">
-        전체 광고비 {{ wasted_summary.total_cost_display }} 중 낭비 비용 {{ wasted_summary.wasted_cost_display }} ({{ wasted_summary.wasted_share_display }})입니다.
-        <span class="note">기준: {{ wasted_summary.source }} (전환 0)</span>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-title">최근 7일 국가별 활성 사용자 지도 ({{ geo_map.start }} ~ {{ geo_map.end }})</div>
-      {% if geo_map.has_data %}
-      <div id="geo-chart" class="geo-chart"></div>
-      <div class="note">총 활성 사용자: {{ geo_map.total_active_display }}명</div>
-      {% else %}
-      <div class="empty-state">최근 7일 국가별 활성 사용자 데이터가 없습니다.</div>
-      {% endif %}
-    </section>
-
     {% macro summary_block(title) %}
     <section class="section">
       <div class="section-title">{{ title }}</div>
-      <div class="section-title">금일 핵심 지표</div>
+      <div class="section-title">어제(확정) 핵심 지표 ({{ summary.yesterday_date }})</div>
       <div class="summary-grid">
-        {% for card in summary.today_cards %}
+        {% for card in summary.yesterday_cards %}
         <div class="kpi-card">
+          <div class="kpi-label">{{ card.label }}</div>
+          <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
+          {% if card.sub %}<div class="kpi-sub">{{ card.sub }}</div>{% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="divider"></div>
+      <div class="section-title">오늘(부분집계)</div>
+      <div class="summary-grid compact">
+        {% for card in summary.today_cards %}
+        <div class="kpi-card small">
           <div class="kpi-label">{{ card.label }}</div>
           <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
           {% if card.sub %}<div class="kpi-sub">{{ card.sub }}</div>{% endif %}
@@ -313,23 +315,21 @@
     </section>
     {% endmacro %}
 
-    {{ summary_block("요약") }}
+    {{ summary_block("어제(확정) KPI") }}
 
     <section class="section">
-      <div class="section-title">일별 추이 그래프 (오늘 포함)</div>
-      <div class="chart-grid">
-        {% for chart in charts %}
-        <div class="chart-card">
-          <div class="chart-title">{{ chart.title }}</div>
-          <img src="{{ chart.path }}" alt="{{ chart.title }} 그래프">
-        </div>
-        {% endfor %}
+      <div class="section-title">낭비(전환 0) 요약 ({{ wasted_summary.start }} ~ {{ wasted_summary.end }})</div>
+      <div class="ai-summary">
+        전체 광고비 {{ wasted_summary.total_cost_display }} 중 낭비 비용 {{ wasted_summary.wasted_cost_display }} ({{ wasted_summary.wasted_share_display }})입니다.
+        <span class="note">전환 0 비용 TOP {{ wasted_summary.top_count }}개 합계 {{ wasted_summary.top_sum_display }}</span>
       </div>
-      <div class="note">기본 그래프는 최근 30일 기준이며, 전체기간 누적/평균 수치는 요약 섹션에 반영했습니다.</div>
+      {% if wasted_summary.top_items %}
+      <div class="note">Top 3: {{ wasted_summary.top_items | join(", ") }}</div>
+      {% endif %}
     </section>
 
     <section class="section">
-      <div class="section-title">키워드 TOP</div>
+      <div class="section-title">키워드 낭비 TOP</div>
       <div class="chart-title">최근 7일 비용 상위 키워드 ({{ keyword_tables.last_7.start }} ~ {{ keyword_tables.last_7.end }})</div>
       <div class="table-wrap">
         <table>
@@ -353,6 +353,7 @@
       </div>
       <div class="divider"></div>
       <div class="chart-title">최근 7일 낭비 키워드 (전환 0, 비용 상위)</div>
+      {% if keyword_tables.last_7.wasted.rows %}
       <div class="table-wrap">
         <table>
           <thead>
@@ -373,6 +374,9 @@
           </tbody>
         </table>
       </div>
+      {% else %}
+      <div class="empty-state">낭비 키워드 데이터가 없습니다.</div>
+      {% endif %}
       <div class="divider"></div>
       <div class="chart-title">최근 30일 비용 상위 키워드 ({{ keyword_tables.last_30.start }} ~ {{ keyword_tables.last_30.end }})</div>
       <div class="table-wrap">
@@ -422,6 +426,29 @@
       </div>
       {% else %}
       <div class="empty-state">낭비 검색어 데이터가 없습니다.</div>
+      {% endif %}
+    </section>
+
+    <section class="section">
+      <div class="section-title">일별 추이 그래프 (오늘 포함)</div>
+      <div class="chart-grid">
+        {% for chart in charts %}
+        <div class="chart-card">
+          <div class="chart-title">{{ chart.title }}</div>
+          <img src="{{ chart.path }}" alt="{{ chart.title }} 그래프">
+        </div>
+        {% endfor %}
+      </div>
+      <div class="note">기본 그래프는 최근 30일 기준이며, 전체기간 누적/평균 수치는 요약 섹션에 반영했습니다.</div>
+    </section>
+
+    <section class="section">
+      <div class="section-title">최근 7일 국가별 활성 사용자 지도 ({{ geo_map.start }} ~ {{ geo_map.end }})</div>
+      {% if geo_map.has_data %}
+      <div id="geo-chart" class="geo-chart"></div>
+      <div class="note">총 활성 사용자: {{ geo_map.total_active_display }}명</div>
+      {% else %}
+      <div class="empty-state">최근 7일 국가별 활성 사용자 데이터가 없습니다.</div>
       {% endif %}
     </section>
 
