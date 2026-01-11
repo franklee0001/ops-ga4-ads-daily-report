@@ -67,6 +67,14 @@ CHART_TITLE_SIZE = 20
 CHART_LABEL_SIZE = 15
 CHART_TICK_SIZE = 13
 CHART_ANNOT_SIZE = 13
+INQUIRY_EVENTS = [
+    "inquiry_complete",
+    "contact_form_submit",
+    "form_submit",
+    "lead",
+    "contact",
+    "inquiry",
+]
 
 
 def seoul_today() -> date:
@@ -123,6 +131,12 @@ def parse_ga4_date(value: str) -> str:
     if len(value) == 8:
         return f"{value[:4]}-{value[4:6]}-{value[6:]}"
     return value
+
+
+def shift_month(target: date, offset: int) -> date:
+    year = target.year + (target.month - 1 + offset) // 12
+    month = (target.month - 1 + offset) % 12 + 1
+    return date(year, month, 1)
 
 
 class GA4Client:
@@ -269,6 +283,7 @@ class ReportGenerator:
         yesterday_line = self._build_today_line((end - timedelta(days=1)).isoformat(), ads_daily, yesterday_wasted_summary)
         action_cards_by_range = self._build_action_cards_by_range(start, end)
         top_strip = self._build_top_strip_today(end, ads_daily)
+        monthly_summary = self._build_monthly_summary(start, end, ga4_daily, ads_daily, ga4_has_data, ads_has_data)
         exec_summary = self._build_executive_summary(
             last_7_dates,
             prev_7_dates,
@@ -315,6 +330,7 @@ class ReportGenerator:
             device_stats,
             weekday_stats,
             heatmap_stats,
+            monthly_summary,
         )
         kpi_by_range = {
             "1d": summary["today_cards"],
@@ -345,6 +361,7 @@ class ReportGenerator:
             "yesterday_line": yesterday_line,
             "action_cards_by_range": action_cards_by_range,
             "top_strip": top_strip,
+            "monthly_summary": monthly_summary,
             "kpi_summary_by_range": kpi_summary_by_range,
             "kpi_by_range": kpi_by_range,
             "kpi_ranges": kpi_ranges,
@@ -1198,14 +1215,6 @@ class ReportGenerator:
 
     def _build_top_strip_today(self, end: date, ads_daily: dict) -> dict:
         today = end.isoformat()
-        inquiry_events = [
-            "inquiry_complete",
-            "contact_form_submit",
-            "form_submit",
-            "lead",
-            "contact",
-            "inquiry",
-        ]
         total_conversions = None
         organic_conversions = None
         ga4_today_has_data = False
@@ -1230,7 +1239,7 @@ class ReportGenerator:
             organic_conversions = 0.0
             for row in rows:
                 event_name = (row.get("eventName") or "").lower()
-                if event_name in inquiry_events:
+                if event_name in INQUIRY_EVENTS:
                     count = float(row.get("eventCount", 0))
                     total_conversions += count
                     if row.get("sessionMedium") == "organic":
@@ -1331,6 +1340,155 @@ class ReportGenerator:
                 value_text, tooltip = display(value, formatter)
             cards.append({"label": label, "value": value_text, "tooltip": tooltip})
         return {"cards": cards, "date": today}
+
+    def _build_monthly_summary(
+        self,
+        start: date,
+        end: date,
+        ga4_daily: dict,
+        ads_daily: dict,
+        ga4_has_data: bool,
+        ads_has_data: bool,
+    ) -> dict:
+        def parse_date_key(value: str) -> date | None:
+            try:
+                return datetime.strptime(value, "%Y-%m-%d").date()
+            except Exception:
+                return None
+
+        available_dates = [start]
+        for key in ga4_daily.keys():
+            parsed = parse_date_key(key)
+            if parsed:
+                available_dates.append(parsed)
+        for key in ads_daily.keys():
+            parsed = parse_date_key(key)
+            if parsed:
+                available_dates.append(parsed)
+        data_min_dt_kst = min(available_dates)
+        min_full_month_start = data_min_dt_kst.replace(day=1)
+        if data_min_dt_kst.day != 1:
+            min_full_month_start = shift_month(min_full_month_start, 1)
+
+        current_month_start = end.replace(day=1)
+        next_month_start = shift_month(current_month_start, 1)
+        last_day_of_month = next_month_start - timedelta(days=1)
+        max_month_start_exclusive = current_month_start if end < last_day_of_month else next_month_start
+
+        lookback_months = 18
+        candidates = [
+            shift_month(current_month_start, -offset)
+            for offset in range(lookback_months, -1, -1)
+        ]
+        month_starts = [
+            month
+            for month in candidates
+            if min_full_month_start <= month < max_month_start_exclusive
+        ]
+        month_starts = month_starts[-12:]
+        month_keys = [month.strftime("%Y-%m") for month in month_starts]
+        if not month_starts:
+            start_limit = max(start, end)
+        else:
+            start_limit = max(start, month_starts[0])
+        date_keys = iso_date_range(start_limit, end)
+
+        ads_by_month = {key: 0.0 for key in month_keys}
+        sessions_by_month = {key: 0.0 for key in month_keys}
+        active_by_month = {key: 0.0 for key in month_keys}
+
+        for date_key in date_keys:
+            month_key = date_key[:7]
+            if month_key not in ads_by_month:
+                continue
+            if date_key in ads_daily:
+                ads_by_month[month_key] += ads_daily[date_key]["conversions"]
+            if date_key in ga4_daily:
+                sessions_by_month[month_key] += float(ga4_daily[date_key]["sessions"])
+                active_by_month[month_key] += float(ga4_daily[date_key]["activeUsers"])
+
+        seo_by_month = {key: 0.0 for key in month_keys}
+        seo_has_data = False
+        try:
+            rows = self.ga4.run_report(
+                ["date", "eventName", "sessionMedium"],
+                ["eventCount"],
+                start_limit.isoformat(),
+                end.isoformat(),
+                limit=100000,
+            )
+            if rows:
+                seo_has_data = True
+                for row in rows:
+                    event_name = (row.get("eventName") or "").lower()
+                    if event_name not in INQUIRY_EVENTS:
+                        continue
+                    if row.get("sessionMedium") != "organic":
+                        continue
+                    date_key = parse_ga4_date(row.get("date", ""))
+                    month_key = date_key[:7]
+                    if month_key not in seo_by_month:
+                        continue
+                    seo_by_month[month_key] += float(row.get("eventCount", 0))
+        except Exception:
+            seo_has_data = False
+
+        visitor_label = "월별 방문자 수(활성 사용자)"
+        visitor_values: list[float] = []
+        visitors_has_data = False
+        active_total = sum(active_by_month.values())
+        sessions_total = sum(sessions_by_month.values())
+        if ga4_has_data and active_total > 0:
+            visitor_values = [active_by_month[key] for key in month_keys]
+            visitors_has_data = True
+        elif ga4_has_data and sessions_total > 0:
+            visitor_label = "월별 방문자 수(세션)"
+            visitor_values = [sessions_by_month[key] for key in month_keys]
+            visitors_has_data = True
+
+        ads_values = [ads_by_month[key] for key in month_keys]
+        seo_values = [seo_by_month[key] for key in month_keys]
+        total_values = [ads_by_month[key] + seo_by_month[key] for key in month_keys]
+        total_has_data = ads_has_data and seo_has_data
+
+        return {
+            "months": month_keys,
+            "ads_conversions": ads_values,
+            "seo_conversions": seo_values,
+            "total_conversions": total_values,
+            "visitors": visitor_values,
+            "ads_has_data": ads_has_data,
+            "seo_has_data": seo_has_data,
+            "total_has_data": total_has_data,
+            "visitors_has_data": visitors_has_data,
+            "visitor_label": visitor_label,
+            "cards": [
+                {
+                    "key": "monthly_ads_conversions",
+                    "label": "월별 전환 수 (Google Ads)",
+                    "has_data": ads_has_data,
+                    "note": "월별 광고 전환 흐름을 확인해 예산 배분을 조정하세요.",
+                },
+                {
+                    "key": "monthly_seo_conversions",
+                    "label": "월별 전환 수 (SEO/Organic)",
+                    "has_data": seo_has_data,
+                    "note": "SEO 전환 흐름을 보고 콘텐츠/랜딩 개선 우선순위를 정하세요.",
+                },
+                {
+                    "key": "monthly_total_conversions",
+                    "label": "월별 총 전환 수 (Ads + SEO)",
+                    "has_data": total_has_data,
+                    "note": "유입 채널 전체 전환 추세를 빠르게 확인하세요.",
+                },
+                {
+                    "key": "monthly_visitors",
+                    "label": visitor_label,
+                    "has_data": visitors_has_data,
+                    "note": "방문자 흐름 변화는 문의/전환의 선행 신호입니다.",
+                },
+            ],
+        }
 
     def _get_ads_inquiry_conversions(self, start: date, end: date) -> float | None:
         inquiry_keywords = ["문의", "문의하기", "contact", "inquiry", "lead", "form", "submit"]
@@ -1817,6 +1975,7 @@ class ReportGenerator:
         device_stats: list[dict],
         weekday_stats: list[dict],
         heatmap_stats: dict,
+        monthly_summary: dict,
     ) -> dict:
         specs: dict[str, dict] = {}
 
@@ -1970,6 +2129,48 @@ class ReportGenerator:
                     "matrix": heatmap_stats["matrix"],
                     "has_data": True,
                 }
+
+        month_labels = monthly_summary.get("months", [])
+        if month_labels and monthly_summary.get("ads_has_data"):
+            specs["monthly_ads_conversions"] = {
+                "type": "bar",
+                "title": "월별 전환 수 (Google Ads)",
+                "labels": month_labels,
+                "values": monthly_summary.get("ads_conversions", []),
+                "has_data": True,
+                "value_format": "number",
+                "figsize": CHART_FIGSIZE_WIDE,
+            }
+        if month_labels and monthly_summary.get("seo_has_data"):
+            specs["monthly_seo_conversions"] = {
+                "type": "bar",
+                "title": "월별 전환 수 (SEO/Organic)",
+                "labels": month_labels,
+                "values": monthly_summary.get("seo_conversions", []),
+                "has_data": True,
+                "value_format": "number",
+                "figsize": CHART_FIGSIZE_WIDE,
+            }
+        if month_labels and monthly_summary.get("total_has_data"):
+            specs["monthly_total_conversions"] = {
+                "type": "bar",
+                "title": "월별 총 전환 수 (Ads + SEO)",
+                "labels": month_labels,
+                "values": monthly_summary.get("total_conversions", []),
+                "has_data": True,
+                "value_format": "number",
+                "figsize": CHART_FIGSIZE_WIDE,
+            }
+        if month_labels and monthly_summary.get("visitors_has_data"):
+            specs["monthly_visitors"] = {
+                "type": "bar",
+                "title": monthly_summary.get("visitor_label", "월별 방문자 수"),
+                "labels": month_labels,
+                "values": monthly_summary.get("visitors", []),
+                "has_data": True,
+                "value_format": "number",
+                "figsize": CHART_FIGSIZE_WIDE,
+            }
 
         return specs
 
@@ -2241,8 +2442,10 @@ class ReportGenerator:
         title: str,
         horizontal: bool = False,
         value_format: str = "number",
+        figsize: tuple[float, float] | None = None,
     ):
-        fig, ax = plt.subplots(figsize=CHART_FIGSIZE_WIDE if horizontal else CHART_FIGSIZE, dpi=CHART_DPI)
+        default_size = CHART_FIGSIZE_WIDE if horizontal else CHART_FIGSIZE
+        fig, ax = plt.subplots(figsize=figsize or default_size, dpi=CHART_DPI)
         if horizontal:
             bars = ax.barh(labels, values, color=ACCENT_COLOR, alpha=0.85)
             ax.invert_yaxis()
@@ -2391,6 +2594,10 @@ class ReportGenerator:
                 "countries_top10": "countries_top10.png",
                 "weekday_conversions": "weekday_conversions.png",
                 "hour_weekday_heatmap": "hour_weekday_heatmap.png",
+                "monthly_ads_conversions": "monthly_ads_conversions.png",
+                "monthly_seo_conversions": "monthly_seo_conversions.png",
+                "monthly_total_conversions": "monthly_total_conversions.png",
+                "monthly_visitors": "monthly_visitors.png",
             }.get(key)
             if not filename:
                 continue
@@ -2403,6 +2610,7 @@ class ReportGenerator:
                     spec["title"],
                     horizontal=False,
                     value_format=spec.get("value_format", "number"),
+                    figsize=spec.get("figsize"),
                 )
             elif spec["type"] == "barh":
                 self._plot_bar_chart(
@@ -2412,6 +2620,7 @@ class ReportGenerator:
                     spec["title"],
                     horizontal=True,
                     value_format=spec.get("value_format", "number"),
+                    figsize=spec.get("figsize"),
                 )
             elif spec["type"] == "dual_bar":
                 self._plot_dual_bar_chart(
@@ -2521,6 +2730,7 @@ def build_render_context(
         "yesterday_line": report_data["yesterday_line"],
         "action_cards_by_range": report_data["action_cards_by_range"],
         "top_strip": report_data["top_strip"],
+        "monthly_summary": report_data["monthly_summary"],
         "kpi_summary_by_range": report_data["kpi_summary_by_range"],
         "kpi_by_range": report_data["kpi_by_range"],
         "kpi_ranges": report_data["kpi_ranges"],
