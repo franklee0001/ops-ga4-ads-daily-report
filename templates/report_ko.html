@@ -124,12 +124,17 @@
       display: inline-block;
     }
     .toggle-group {
-      display: inline-flex;
-      gap: 8px;
+      display: flex;
+      flex-direction: row;
       flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
       margin-bottom: 12px;
     }
     .toggle-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       border: 1px solid var(--line);
       background: #fff;
       color: var(--ink);
@@ -137,6 +142,7 @@
       border-radius: 999px;
       font-size: 13px;
       cursor: pointer;
+      min-width: 92px;
     }
     .toggle-btn.active {
       background: var(--accent);
@@ -420,8 +426,8 @@
     <section class="section">
       <div class="section-title">오늘 할 일 3개</div>
       <div class="toggle-group" data-range-toggle="global">
-        <button class="toggle-btn active" data-range="7d">최근 7일</button>
         <button class="toggle-btn" data-range="1d">오늘(부분)</button>
+        <button class="toggle-btn active" data-range="7d">최근 7일</button>
         <button class="toggle-btn" data-range="30d">최근 30일</button>
         <button class="toggle-btn" data-range="all">전체기간</button>
       </div>
@@ -445,8 +451,8 @@
     <section class="section">
       <div class="section-title">어디서 들어왔나</div>
       <div class="toggle-group" data-range-toggle="global">
-        <button class="toggle-btn active" data-range="7d">최근 7일</button>
         <button class="toggle-btn" data-range="1d">오늘(부분)</button>
+        <button class="toggle-btn active" data-range="7d">최근 7일</button>
         <button class="toggle-btn" data-range="30d">최근 30일</button>
         <button class="toggle-btn" data-range="all">전체기간</button>
       </div>
@@ -489,8 +495,8 @@
     <section class="section">
       <div class="section-title">핵심 지표</div>
       <div class="toggle-group" data-range-toggle="global">
-        <button class="toggle-btn active" data-range="7d">최근 7일</button>
         <button class="toggle-btn" data-range="1d">오늘(부분)</button>
+        <button class="toggle-btn active" data-range="7d">최근 7일</button>
         <button class="toggle-btn" data-range="30d">최근 30일</button>
         <button class="toggle-btn" data-range="all">전체기간</button>
       </div>

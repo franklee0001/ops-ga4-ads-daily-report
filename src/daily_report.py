@@ -1066,10 +1066,13 @@ class ReportGenerator:
         results = []
         total = 0.0
         for row in rows:
+            day = mapping.get(str(row.segments.day_of_week))
+            if not day:
+                continue
             conversions = row.metrics.conversions
             total += conversions
             results.append({
-                "weekday": mapping.get(str(row.segments.day_of_week), "기타"),
+                "weekday": day,
                 "conversions": conversions,
             })
         print(f"[DEBUG] 요일별 전환 합계={total:.1f}")
@@ -1205,6 +1208,7 @@ class ReportGenerator:
         ]
         total_conversions = None
         organic_conversions = None
+        ga4_today_has_data = False
         try:
             rows = self.ga4.run_report(
                 ["eventName", "sessionMedium"],
@@ -1213,6 +1217,7 @@ class ReportGenerator:
                 today,
                 limit=10000,
             )
+            ga4_today_has_data = bool(rows)
             total_conversions = 0.0
             organic_conversions = 0.0
             for row in rows:
@@ -1230,6 +1235,7 @@ class ReportGenerator:
         try:
             rows = self.ga4.run_report([], ["activeUsers"], today, today)
             if rows:
+                ga4_today_has_data = True
                 visitors = float(rows[0].get("activeUsers", 0))
         except Exception:
             visitors = None
@@ -1237,18 +1243,21 @@ class ReportGenerator:
         organic_sessions = None
         try:
             rows = self.ga4.run_report(["sessionMedium"], ["sessions"], today, today)
-            organic_sessions = 0.0
-            for row in rows:
-                if row.get("sessionMedium") == "organic":
-                    organic_sessions += float(row.get("sessions", 0))
+            if rows:
+                ga4_today_has_data = True
+                organic_sessions = 0.0
+                for row in rows:
+                    if row.get("sessionMedium") == "organic":
+                        organic_sessions += float(row.get("sessions", 0))
         except Exception:
             organic_sessions = None
 
         top_landing = None
         try:
             rows = self.ga4.run_report(["landingPagePlusQueryString"], ["sessions"], today, today, limit=1000)
-            rows.sort(key=lambda r: float(r.get("sessions", 0)), reverse=True)
             if rows:
+                ga4_today_has_data = True
+                rows.sort(key=lambda r: float(r.get("sessions", 0)), reverse=True)
                 top_landing = rows[0].get("landingPagePlusQueryString")
         except Exception:
             top_landing = None
@@ -1265,19 +1274,33 @@ class ReportGenerator:
                 return formatter(value), None
             return str(value), None
 
+        def display_ga4(value: float | str | None, formatter=None) -> tuple[str, str | None]:
+            if not ga4_today_has_data:
+                return "데이터 없음", "GA4 오늘 데이터가 없습니다."
+            return display(value, formatter)
+
         cards = []
         for label, value, formatter in [
-            ("오늘 총 문의 수", total_conversions, lambda v: format_float(v, 1)),
+            ("오늘 총 문의 수", total_conversions, lambda v: format_int(v)),
             ("오늘 방문자 수(활성 사용자)", visitors, lambda v: format_int(v)),
             ("오늘 쓴 돈(광고비)", ads_today["cost"], format_currency),
             ("오늘 SEO 방문자 수(세션)", organic_sessions, lambda v: format_int(v)),
-            ("오늘 SEO 문의 수", organic_conversions, lambda v: format_float(v, 1)),
-            ("오늘 Google Ads 문의 수", ads_inquiry, lambda v: format_float(v, 1)),
+            ("오늘 SEO 문의 수", organic_conversions, lambda v: format_int(v)),
+            ("오늘 Google Ads 문의 수", ads_inquiry, lambda v: format_int(v)),
             ("오늘 가장 많이 본 페이지", top_landing, None),
             ("오늘 광고 클릭률(CTR)", ads_ctr, lambda v: format_percent(v, 1)),
             ("오늘 광고 노출 수", float(ads_today["impressions"]), lambda v: format_int(v)),
         ]:
-            value_text, tooltip = display(value, formatter)
+            if label in (
+                "오늘 총 문의 수",
+                "오늘 방문자 수(활성 사용자)",
+                "오늘 SEO 방문자 수(세션)",
+                "오늘 SEO 문의 수",
+                "오늘 가장 많이 본 페이지",
+            ):
+                value_text, tooltip = display_ga4(value, formatter)
+            else:
+                value_text, tooltip = display(value, formatter)
             cards.append({"label": label, "value": value_text, "tooltip": tooltip})
         return {"cards": cards, "date": today}
 
@@ -1938,6 +1961,11 @@ class ReportGenerator:
         )
         source_rows.sort(key=lambda x: x.get("sessions", 0), reverse=True)
         source_top = source_rows[:10]
+
+        if len(landing_rows) <= len(landing_top):
+            print(f"[DEBUG] 랜딩 전체 rows={len(landing_rows)} / top10={len(landing_top)}")
+        if len(source_rows) <= len(source_top):
+            print(f"[DEBUG] 소스 전체 rows={len(source_rows)} / top10={len(source_top)}")
 
         campaign_query = (
             "SELECT campaign.name, metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions "
