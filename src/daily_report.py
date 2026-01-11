@@ -1195,13 +1195,36 @@ class ReportGenerator:
 
     def _build_top_strip_today(self, end: date, ads_daily: dict) -> dict:
         today = end.isoformat()
+        inquiry_events = [
+            "inquiry_complete",
+            "contact_form_submit",
+            "form_submit",
+            "lead",
+            "contact",
+            "inquiry",
+        ]
         total_conversions = None
+        organic_conversions = None
         try:
-            rows = self.ga4.run_report([], ["conversions"], today, today)
-            if rows:
-                total_conversions = float(rows[0].get("conversions", 0))
+            rows = self.ga4.run_report(
+                ["eventName", "sessionMedium"],
+                ["eventCount"],
+                today,
+                today,
+                limit=10000,
+            )
+            total_conversions = 0.0
+            organic_conversions = 0.0
+            for row in rows:
+                event_name = (row.get("eventName") or "").lower()
+                if event_name in inquiry_events:
+                    count = float(row.get("eventCount", 0))
+                    total_conversions += count
+                    if row.get("sessionMedium") == "organic":
+                        organic_conversions += count
         except Exception:
             total_conversions = None
+            organic_conversions = None
 
         visitors = None
         try:
@@ -1212,18 +1235,14 @@ class ReportGenerator:
             visitors = None
 
         organic_sessions = None
-        organic_conversions = None
         try:
-            rows = self.ga4.run_report(["sessionMedium"], ["sessions", "conversions"], today, today)
+            rows = self.ga4.run_report(["sessionMedium"], ["sessions"], today, today)
             organic_sessions = 0.0
-            organic_conversions = 0.0
             for row in rows:
                 if row.get("sessionMedium") == "organic":
                     organic_sessions += float(row.get("sessions", 0))
-                    organic_conversions += float(row.get("conversions", 0))
         except Exception:
             organic_sessions = None
-            organic_conversions = None
 
         top_landing = None
         try:
@@ -2224,6 +2243,17 @@ class ReportGenerator:
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
 
+    def _plot_country_map_placeholder(self, path: Path, countries: list[str], values: list[float], title: str):
+        labels = [self._wrap_label(name, width=14) for name in countries]
+        self._plot_bar_chart(
+            path,
+            labels,
+            values,
+            title,
+            horizontal=True,
+            value_format="number",
+        )
+
     def _plot_dual_bar_chart(
         self,
         path: Path,
@@ -2351,6 +2381,23 @@ class ReportGenerator:
             chart_paths[key] = filename
         return chart_paths
 
+    def generate_geo_map_images(self, output_dir: Path, geo_maps: dict) -> dict:
+        output_dir.mkdir(parents=True, exist_ok=True)
+        result = {}
+        for key, data in geo_maps.items():
+            if not data.get("has_data"):
+                continue
+            filename = f"geo_map_{key}.png"
+            path = output_dir / filename
+            top_rows = data.get("top10", [])
+            if not top_rows:
+                continue
+            countries = [row["country"] for row in top_rows]
+            values = [row["active"] for row in top_rows]
+            self._plot_country_map_placeholder(path, countries, values, "국가별 분포 지도(요약)")
+            result[key] = filename
+        return result
+
     def render_report(self, output_path: Path, context: dict):
         env = Environment(
             loader=FileSystemLoader("templates"),
@@ -2384,6 +2431,9 @@ def build_render_context(
         })
     extra_charts = {
         key: f"{chart_prefix}{filename}" for key, filename in report_data.get("extra_charts", {}).items()
+    }
+    geo_map_images = {
+        key: f"{chart_prefix}{filename}" for key, filename in report_data.get("geo_map_images", {}).items()
     }
     weekday_chart_path = f"{chart_prefix}weekday_conversions.png" if report_data.get("weekday_has_data") else None
     return {
@@ -2419,6 +2469,7 @@ def build_render_context(
         "final_conclusion": report_data["final_conclusion"],
         "weekday_has_data": report_data["weekday_has_data"],
         "weekday_chart_path": weekday_chart_path,
+        "geo_map_images": geo_map_images,
         "extra_charts": extra_charts,
         "build_metadata": {
             "env": build_env,
@@ -2450,6 +2501,7 @@ def main():
             png.unlink()
     generator.generate_charts(report_dir, report_data["charts"])
     report_data["extra_charts"] = generator.generate_extra_charts(report_dir, report_data.get("extra_chart_specs", {}))
+    report_data["geo_map_images"] = generator.generate_geo_map_images(report_dir, report_data["geo_maps"])
 
     report_context = build_render_context(
         report_data,

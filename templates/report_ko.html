@@ -4,7 +4,6 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ report_title }}</title>
-  <script src="https://www.gstatic.com/charts/loader.js"></script>
   <style>
     :root {
       --accent: #2563eb;
@@ -114,6 +113,15 @@
       font-weight: 700;
       word-break: break-word;
       overflow-wrap: anywhere;
+    }
+    .tooltip {
+      margin-left: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 0 6px;
+      display: inline-block;
     }
     .toggle-group {
       display: inline-flex;
@@ -394,7 +402,12 @@
         {% for card in top_strip.cards %}
         <div class="strip-card">
           <div class="strip-label">{{ card.label }}</div>
-          <div class="strip-value" title="{{ card.tooltip if card.tooltip else card.value }}">{{ card.value }}</div>
+          <div class="strip-value" title="{{ card.tooltip if card.tooltip else card.value }}">
+            {{ card.value }}
+            {% if card.tooltip %}
+            <span class="tooltip">i</span>
+            {% endif %}
+          </div>
         </div>
         {% endfor %}
       </div>
@@ -437,8 +450,13 @@
         <button class="toggle-btn" data-range="30d">최근 30일</button>
         <button class="toggle-btn" data-range="all">전체기간</button>
       </div>
-      <div id="geo-chart" class="geo-chart"></div>
-      <div id="geo-empty" class="empty-state hidden">국가별 데이터가 없습니다.</div>
+      {% for key in ["7d", "1d", "30d", "all"] %}
+      {% if geo_map_images[key] %}
+      <img class="chart-image toggle-panel {% if key != '7d' %}hidden{% endif %}" data-toggle-panel="geo" data-range="{{ key }}" src="{{ geo_map_images[key] }}" alt="국가별 지도" onerror="this.style.display='none'">
+      {% else %}
+      <div class="empty-state toggle-panel {% if key != '7d' %}hidden{% endif %}" data-toggle-panel="geo" data-range="{{ key }}">국가별 데이터가 없습니다.</div>
+      {% endif %}
+      {% endfor %}
       <div class="chart-note">
         <strong>의미:</strong> 선택한 기간의 국가별 활성 사용자 분포입니다.<br>
         <strong>해석:</strong> 상위 국가가 편중되면 해당 국가용 메시지/랜딩을 강화하세요.
@@ -463,7 +481,9 @@
         </table>
         {% endfor %}
       </div>
-      <div class="note" id="geo-total"></div>
+      {% for key in ["7d", "1d", "30d", "all"] %}
+      <div class="note toggle-panel {% if key != '7d' %}hidden{% endif %}" data-toggle-panel="geo" data-range="{{ key }}">총 활성 사용자: {{ geo_maps[key].total_active_display }}명</div>
+      {% endfor %}
     </section>
 
     <section class="section">
@@ -901,29 +921,6 @@
   </div>
 
   <script>
-    const GEO_MAPS = {
-      "1d": {
-        hasData: {{ "true" if geo_maps["1d"].has_data else "false" }},
-        data: {{ geo_maps["1d"].chart_json | safe }},
-        total: "{{ geo_maps["1d"].total_active_display }}"
-      },
-      "7d": {
-        hasData: {{ "true" if geo_maps["7d"].has_data else "false" }},
-        data: {{ geo_maps["7d"].chart_json | safe }},
-        total: "{{ geo_maps["7d"].total_active_display }}"
-      },
-      "30d": {
-        hasData: {{ "true" if geo_maps["30d"].has_data else "false" }},
-        data: {{ geo_maps["30d"].chart_json | safe }},
-        total: "{{ geo_maps["30d"].total_active_display }}"
-      },
-      "all": {
-        hasData: {{ "true" if geo_maps["all"].has_data else "false" }},
-        data: {{ geo_maps["all"].chart_json | safe }},
-        total: "{{ geo_maps["all"].total_active_display }}"
-      }
-    };
-
     function setActiveButtons(range) {
       const buttons = document.querySelectorAll("[data-range-toggle=\"global\"] .toggle-btn");
       buttons.forEach(btn => btn.classList.toggle("active", btn.dataset.range === range));
@@ -937,23 +934,7 @@
     }
 
     function drawGeo(range) {
-      const geo = GEO_MAPS[range];
-      const chartEl = document.getElementById("geo-chart");
-      const emptyEl = document.getElementById("geo-empty");
-      const totalEl = document.getElementById("geo-total");
-      if (!geo || !geo.hasData) {
-        chartEl.classList.add("hidden");
-        emptyEl.classList.remove("hidden");
-        totalEl.textContent = "";
-        return;
-      }
-      emptyEl.classList.add("hidden");
-      chartEl.classList.remove("hidden");
-      totalEl.textContent = `총 활성 사용자: ${geo.total}명`;
-      const data = google.visualization.arrayToDataTable(geo.data);
-      const options = { backgroundColor: "transparent", legend: "none" };
-      const chart = new google.visualization.GeoChart(chartEl);
-      chart.draw(data, options);
+      return;
     }
 
     function bindGlobalToggle() {
@@ -972,12 +953,8 @@
       drawGeo(range);
     }
 
-    google.charts.load("current", {"packages":["geochart"]});
-    google.charts.setOnLoadCallback(() => {
-      applyRange("7d");
-      bindGlobalToggle();
-    });
-
+    applyRange("7d");
+    bindGlobalToggle();
     showPanels("7d");
   </script>
 </body>
