@@ -2,10 +2,13 @@
 HueLight GA4/Google Ads 일일 리포트 생성기
 """
 
+import csv
+import io
 import json
 import os
 import sys
 import textwrap
+import urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -1234,49 +1237,19 @@ class ReportGenerator:
                 print(f"[INFO] today_traffic_report: rows={len(totals)}, sessions={ga4_today_sessions}, activeUsers={ga4_today_active}")
             else:
                 print("[INFO] today_traffic_report: rows=0")
-            rows = self.ga4.run_report(
-                ["eventName", "sessionSource", "sessionMedium"],
-                ["eventCount"],
-                today,
-                today,
-                limit=10000,
-            )
-            print("[INFO] today_inquiry_report: dimensions=[eventName,sessionSource,sessionMedium], metrics=[eventCount], filter=eventName whitelist")
-            print(f"[INFO] today_inquiry_report: range={today}~{today}, rows={len(rows)}")
-            total_inquiries = 0.0
-            seo_inquiries = 0.0
-            ads_inquiries = 0.0
-            direct_inquiries = 0.0
-            other_inquiries = 0.0
-            matched_events = {}
-            for row in rows:
-                event_name = (row.get("eventName") or "").lower()
-                if event_name not in INQUIRY_EVENT_NAMES:
-                    continue
-                count = float(row.get("eventCount", 0))
-                matched_events[event_name] = matched_events.get(event_name, 0) + count
-                total_inquiries += count
-                source = (row.get("sessionSource") or "").lower()
-                medium = (row.get("sessionMedium") or "").lower()
-                if medium == "organic":
-                    seo_inquiries += count
-                elif medium in ("cpc", "ppc", "paidsearch") or (source == "google" and medium == "cpc"):
-                    ads_inquiries += count
-                elif source == "(direct)" and medium == "(none)":
-                    direct_inquiries += count
-                else:
-                    other_inquiries += count
-            if matched_events:
-                inquiry_status = "ok"
-                events_summary = ", ".join(
-                    f"{name}:{format_int(value)}" for name, value in sorted(matched_events.items())
+            print("[INFO] today_traffic_report: dimensions=[sessionMedium], metrics=[sessions], filter=none")
+            print(f"[INFO] today_traffic_report: range={today}~{today} (organic sessions)")
+            rows = self.ga4.run_report(["sessionMedium"], ["sessions"], today, today)
+            if rows:
+                traffic_ok = True
+                organic_sessions_total = sum(
+                    float(row.get("sessions", 0))
+                    for row in rows
+                    if (row.get("sessionMedium") or "").lower() == "organic"
                 )
-                print(f"[INFO] today_inquiry_report: events={events_summary}")
-            elif rows:
-                inquiry_status = "ok"
-                print("[INFO] today_inquiry_report: 문의 이벤트 없음(0건)")
+                print(f"[INFO] today_traffic_report: rows={len(rows)}, organic_sessions={organic_sessions_total}")
             else:
-                inquiry_status = "pending" if traffic_ok else "missing"
+                print("[INFO] today_traffic_report: rows=0 (organic sessions)")
         except Exception:
             total_inquiries = None
             seo_inquiries = None
@@ -1285,28 +1258,82 @@ class ReportGenerator:
             other_inquiries = None
             inquiry_status = "missing"
 
+        inquiry_log = self._load_inquiry_log(end)
+        if inquiry_log["status"] != "ok":
+            total_inquiries = None
+            seo_inquiries = None
+            ads_inquiries = None
+            direct_inquiries = None
+            other_inquiries = None
+            inquiry_status = "missing"
+        else:
+            today_rows = [row for row in inquiry_log["rows"] if row["date_kst"] == today]
+            seo_inquiries = 0.0
+            ads_inquiries = 0.0
+            direct_inquiries = 0.0
+            other_inquiries = 0.0
+            for row in today_rows:
+                channel = self._classify_inquiry_channel(row)
+                if channel == "seo":
+                    seo_inquiries += 1
+                elif channel == "ads":
+                    ads_inquiries += 1
+                elif channel == "direct":
+                    direct_inquiries += 1
+                else:
+                    other_inquiries += 1
+            total_inquiries = seo_inquiries + ads_inquiries + direct_inquiries + other_inquiries
+            print(
+                "[INFO] 오늘 문의(폼 제출) 집계: "
+                f"총 {format_int(total_inquiries)}, SEO {format_int(seo_inquiries)}, "
+                f"Ads {format_int(ads_inquiries)}, Direct {format_int(direct_inquiries)}, "
+                f"기타 {format_int(other_inquiries)}"
+            )
+            for row in today_rows[:5]:
+                print(
+                    "[INFO] 문의 샘플: "
+                    f"{row['timestamp'].isoformat()} / {row.get('country','-')} / "
+                    f"{self._mask_email(row.get('email',''))} / "
+                    f"{row.get('source','-')} / {row.get('medium','-')} / "
+                    f"{row.get('referrer','-')}"
+                )
+            if today_rows:
+                inquiry_status = "ok"
+            else:
+                inquiry_status = "pending" if traffic_ok else "ok"
+
         visitors = ga4_today_active
 
         organic_sessions = None
         try:
+            print("[INFO] today_traffic_report: dimensions=[sessionMedium], metrics=[sessions], filter=none (SEO sessions)")
+            print(f"[INFO] today_traffic_report: range={today}~{today} (SEO sessions)")
             rows = self.ga4.run_report(["sessionMedium"], ["sessions"], today, today)
             if rows:
-                ga4_today_has_data = True
+                traffic_ok = True
                 organic_sessions = 0.0
                 for row in rows:
                     if row.get("sessionMedium") == "organic":
                         organic_sessions += float(row.get("sessions", 0))
+                print(f"[INFO] today_traffic_report: rows={len(rows)}, organic_sessions={organic_sessions}")
+            else:
+                print("[INFO] today_traffic_report: rows=0 (SEO sessions)")
         except Exception:
             organic_sessions = None
 
         top_landing = None
         top_landing_label = "오늘 가장 많이 본 페이지"
         try:
+            print("[INFO] today_traffic_report: dimensions=[landingPagePlusQueryString], metrics=[sessions], filter=none")
+            print(f"[INFO] today_traffic_report: range={today}~{today} (landing page)")
             rows = self.ga4.run_report(["landingPagePlusQueryString"], ["sessions"], today, today, limit=1000)
             if rows:
-                ga4_today_has_data = True
+                traffic_ok = True
                 rows.sort(key=lambda r: float(r.get("sessions", 0)), reverse=True)
                 top_landing = rows[0].get("landingPagePlusQueryString")
+                print(f"[INFO] today_traffic_report: rows={len(rows)}, top_landing={top_landing}")
+            else:
+                print("[INFO] today_traffic_report: rows=0 (landing page)")
         except Exception:
             top_landing = None
         if top_landing is None:
@@ -1348,9 +1375,9 @@ class ReportGenerator:
 
         def display_inquiry(value: float | str | None, formatter=None) -> tuple[str, str | None]:
             if inquiry_status == "pending":
-                return "집계중", "GA4 당일 이벤트 집계 지연 가능"
+                return "집계중", "문의 로그 당일 반영 지연 가능"
             if inquiry_status == "missing":
-                return "데이터 없음", "GA4 오늘 문의 이벤트 데이터가 없습니다."
+                return "데이터 없음", "문의 데이터 소스 로드 실패"
             return display(value, formatter)
 
         visitor_label = "오늘 방문자 수(활성 사용자)"
@@ -1390,6 +1417,143 @@ class ReportGenerator:
                 value_text, tooltip = display(value, formatter)
             cards.append({"label": label, "value": value_text, "tooltip": tooltip})
         return {"cards": cards, "date": today}
+
+    def _load_inquiry_log(self, end: date) -> dict:
+        log_url = os.getenv("INQUIRY_LOG_URL", "").strip()
+        log_path = os.getenv("INQUIRY_LOG_PATH", "").strip()
+        if not log_path:
+            report_path = Path(f"reports/{end.isoformat()}/inquiries.csv")
+            root_path = Path("inquiries.csv")
+            if report_path.exists():
+                log_path = str(report_path)
+            elif root_path.exists():
+                log_path = str(root_path)
+
+        try:
+            if log_url:
+                print(f"[INFO] 문의 로그 URL 로드: {log_url}")
+                with urllib.request.urlopen(log_url, timeout=10) as response:
+                    content = response.read().decode("utf-8-sig")
+            elif log_path:
+                print(f"[INFO] 문의 로그 파일 로드: {log_path}")
+                content = Path(log_path).read_text(encoding="utf-8-sig")
+            else:
+                print("[WARN] 문의 데이터 소스 로드 실패: INQUIRY_LOG_PATH/URL 없음")
+                return {"status": "missing", "rows": []}
+        except Exception as exc:
+            print(f"[WARN] 문의 데이터 소스 로드 실패: {exc}")
+            return {"status": "missing", "rows": []}
+
+        reader = csv.DictReader(io.StringIO(content))
+        rows = []
+        for row in reader:
+            normalized = self._normalize_inquiry_row(row)
+            if normalized:
+                rows.append(normalized)
+        print(f"[INFO] 문의 로그 rows={len(rows)}")
+        return {"status": "ok", "rows": rows}
+
+    def _normalize_inquiry_row(self, row: dict) -> dict | None:
+        timestamp = self._parse_inquiry_timestamp(row)
+        if not timestamp:
+            return None
+        date_kst = timestamp.date().isoformat()
+        source = self._get_inquiry_field(row, ["source", "utm_source", "sessionSource", "source/medium", "source_medium"])
+        medium = self._get_inquiry_field(row, ["medium", "utm_medium", "sessionMedium", "source/medium", "source_medium"])
+        if source and "/" in source and not medium:
+            parts = [part.strip() for part in source.split("/", 1)]
+            if len(parts) == 2:
+                source, medium = parts
+        if medium and "/" in medium and not source:
+            parts = [part.strip() for part in medium.split("/", 1)]
+            if len(parts) == 2:
+                source, medium = parts
+        channel = self._get_inquiry_field(
+            row,
+            ["channel", "channel_group", "channelGrouping", "default_channel_group", "traffic_channel"],
+        )
+        return {
+            "timestamp": timestamp,
+            "date_kst": date_kst,
+            "country": self._get_inquiry_field(row, ["country", "geo", "location"]),
+            "email": self._get_inquiry_field(row, ["email", "user_email", "email_address", "mail"]),
+            "source": (source or "").strip(),
+            "medium": (medium or "").strip(),
+            "channel": (channel or "").strip(),
+            "referrer": self._get_inquiry_field(row, ["referrer", "referer", "referral", "http_referer"]),
+            "landing": self._get_inquiry_field(
+                row,
+                ["landing", "landing_page", "landing_page_path", "page", "page_path", "landingPage", "landingPagePlusQueryString"],
+            ),
+            "gclid": self._get_inquiry_field(row, ["gclid", "gclid_id"]),
+        }
+
+    def _parse_inquiry_timestamp(self, row: dict) -> datetime | None:
+        value = self._get_inquiry_field(
+            row,
+            ["timestamp", "created_at", "submitted_at", "datetime", "date", "time", "createdAt", "문의일시"],
+        )
+        if not value:
+            return None
+        value = value.strip()
+        try:
+            dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except Exception:
+            dt = None
+        if dt is None:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d %H:%M", "%Y-%m-%d"):
+                try:
+                    dt = datetime.strptime(value, fmt)
+                    break
+                except Exception:
+                    continue
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=ZoneInfo(TIMEZONE))
+        return dt.astimezone(ZoneInfo(TIMEZONE))
+
+    def _get_inquiry_field(self, row: dict, keys: list[str]) -> str:
+        for key in keys:
+            if key in row and str(row[key]).strip():
+                return str(row[key]).strip()
+        for original, value in row.items():
+            if original is None:
+                continue
+            lowered = str(original).strip().lower()
+            for key in keys:
+                if lowered == key.lower():
+                    if str(value).strip():
+                        return str(value).strip()
+        return ""
+
+    def _classify_inquiry_channel(self, row: dict) -> str:
+        source = (row.get("source") or "").lower()
+        medium = (row.get("medium") or "").lower()
+        channel = (row.get("channel") or "").lower()
+        referrer = (row.get("referrer") or "").strip()
+        landing = (row.get("landing") or "").strip()
+        gclid = (row.get("gclid") or "").strip()
+
+        if gclid or medium in ("cpc", "ppc", "paidsearch") or "paid search" in medium or "paid search" in channel:
+            return "ads"
+        if source == "google" and medium == "cpc":
+            return "ads"
+        if medium == "organic" or (source == "google" and medium == "organic"):
+            return "seo"
+        if source == "(direct)" and medium == "(none)":
+            return "direct"
+        if not referrer and landing in ("/contact", "/contact/"):
+            return "direct"
+        return "other"
+
+    def _mask_email(self, value: str) -> str:
+        if not value or "@" not in value:
+            return value or "-"
+        name, domain = value.split("@", 1)
+        if not name:
+            name = "*"
+        return f"{name[:1]}***@{domain}"
 
     def _build_monthly_summary(
         self,
