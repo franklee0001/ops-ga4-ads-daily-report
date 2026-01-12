@@ -445,6 +445,17 @@
       {% endfor %}
     </section>
     <section class="section">
+      <div class="section-title">최근 7일 방문자(활성 사용자)</div>
+      <div class="note">방문자 흐름 변화는 문의/전환의 선행 신호입니다.</div>
+      <div class="chart-card">
+        {% if extra_charts.weekly_active_users and weekly_active_users.has_data %}
+        <img src="{{ extra_charts.weekly_active_users }}" alt="최근 7일 방문자(활성 사용자)" onerror="this.style.display='none'">
+        {% else %}
+        <div class="empty-state">해당 기간에 방문자 데이터가 없습니다.</div>
+        {% endif %}
+      </div>
+    </section>
+    <section class="section">
       <div class="section-title">월간 요약 (최근 12개월)</div>
       <div class="note">월 단위로 전환과 방문자 흐름을 빠르게 확인합니다.</div>
       <div class="chart-grid">

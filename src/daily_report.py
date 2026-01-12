@@ -311,6 +311,7 @@ class ReportGenerator:
             keyword_tables,
             search_terms,
         )
+        weekly_active_users = self._build_weekly_active_users_chart(last_7_dates, ga4_daily, ga4_has_data)
         waste_notes = self._build_waste_notes(wasted_summary)
         waste_actions = self._build_waste_actions(action_cards_by_range["7d"], tables)
         growth_notes = self._build_growth_notes(keyword_tables)
@@ -329,6 +330,7 @@ class ReportGenerator:
             weekday_stats,
             heatmap_stats,
             monthly_summary,
+            weekly_active_users,
         )
         kpi_by_range = {
             "1d": summary["today_cards"],
@@ -364,6 +366,7 @@ class ReportGenerator:
             "kpi_by_range": kpi_by_range,
             "kpi_ranges": kpi_ranges,
             "weekly_notes": weekly_notes,
+            "weekly_active_users": weekly_active_users,
             "waste_notes": waste_notes,
             "waste_actions": waste_actions,
             "growth_notes": growth_notes,
@@ -1675,6 +1678,15 @@ class ReportGenerator:
             f"특히 {top_item}가 비용 상위입니다.",
         ]
 
+    def _build_weekly_active_users_chart(self, last_7_dates: list[str], ga4_daily: dict, ga4_has_data: bool) -> dict:
+        if not last_7_dates or not ga4_has_data:
+            return {"has_data": False, "labels": [], "values": []}
+        labels = [f"{date_key[5:7]}-{date_key[8:10]}" for date_key in last_7_dates]
+        values = [float(ga4_daily[date_key]["activeUsers"]) for date_key in last_7_dates]
+        if not any(values):
+            return {"has_data": False, "labels": labels, "values": values}
+        return {"has_data": True, "labels": labels, "values": values}
+
     def _build_waste_actions(self, action_cards: list[dict], tables: dict) -> list[str]:
         pause = ", ".join(action_cards[0]["items_list"]) if action_cards else "없음"
         negative = ", ".join(action_cards[1]["items_list"]) if len(action_cards) > 1 else "없음"
@@ -1947,6 +1959,7 @@ class ReportGenerator:
         weekday_stats: list[dict],
         heatmap_stats: dict,
         monthly_summary: dict,
+        weekly_active_users: dict,
     ) -> dict:
         specs: dict[str, dict] = {}
 
@@ -2150,6 +2163,16 @@ class ReportGenerator:
                 "has_data": True,
                 "value_format": "number",
                 "figsize": CHART_FIGSIZE_WIDE,
+            }
+        if weekly_active_users.get("has_data"):
+            specs["weekly_active_users"] = {
+                "type": "bar",
+                "title": "최근 7일 방문자(활성 사용자)",
+                "labels": weekly_active_users.get("labels", []),
+                "values": weekly_active_users.get("values", []),
+                "has_data": True,
+                "value_format": "number",
+                "figsize": CHART_FIGSIZE,
             }
 
         return specs
@@ -2579,6 +2602,7 @@ class ReportGenerator:
                 "monthly_seo_conversions": "monthly_seo_conversions.png",
                 "monthly_total_conversions": "monthly_total_conversions.png",
                 "monthly_visitors": "monthly_visitors.png",
+                "weekly_active_users": "weekly_active_users.png",
             }.get(key)
             if not filename:
                 continue
@@ -2716,6 +2740,7 @@ def build_render_context(
         "kpi_by_range": report_data["kpi_by_range"],
         "kpi_ranges": report_data["kpi_ranges"],
         "weekly_notes": report_data["weekly_notes"],
+        "weekly_active_users": report_data["weekly_active_users"],
         "waste_notes": report_data["waste_notes"],
         "waste_actions": report_data["waste_actions"],
         "growth_notes": report_data["growth_notes"],
