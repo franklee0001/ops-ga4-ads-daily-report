@@ -426,9 +426,11 @@
       </div>
     </header>
     <section class="section">
-      <div class="section-title">오늘 핵심 요약</div>
+      <div class="section-title">오늘/어제 핵심 요약</div>
+      {% for block in top_strip.blocks %}
+      <div class="chart-title">{{ block.label }} · {{ block.date }}</div>
       <div class="top-strip">
-        {% for card in top_strip.cards %}
+        {% for card in block.cards %}
         <div class="strip-card">
           <div class="strip-label">{{ card.label }}</div>
           <div class="strip-value" title="{{ card.tooltip if card.tooltip else card.value }}">
@@ -440,6 +442,7 @@
         </div>
         {% endfor %}
       </div>
+      {% endfor %}
     </section>
     <section class="section">
       <div class="section-title">월간 요약 (최근 12개월)</div>
@@ -563,17 +566,6 @@
       <div class="divider"></div>
       <div class="chart-title">어제(확정) 한 줄 결론</div>
       <div class="ai-summary">{{ yesterday_line }}</div>
-      <div class="divider"></div>
-      <div class="chart-title">어제(확정) 핵심 지표 · {{ summary.yesterday_date }}</div>
-      <div class="summary-grid">
-        {% for card in summary.yesterday_cards %}
-        <div class="kpi-card">
-          <div class="kpi-label">{{ card.label }}</div>
-          <div class="kpi-value">{{ card.value }}{% if card.unit %}<span class="kpi-unit">{{ card.unit }}</span>{% endif %}</div>
-          {% if card.delta %}<div class="kpi-delta">{{ card.delta }}</div>{% endif %}
-        </div>
-        {% endfor %}
-      </div>
     </section>
 
     <section class="section">

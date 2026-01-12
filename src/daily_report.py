@@ -1215,147 +1215,6 @@ class ReportGenerator:
         return result
 
     def _build_top_strip_today(self, end: date, ads_daily: dict) -> dict:
-        today = end.isoformat()
-        print(f"[INFO] 문의 이벤트 사용: {', '.join(INQUIRY_EVENT_NAMES)}")
-        total_inquiries = None
-        seo_inquiries = None
-        ads_inquiries = None
-        direct_inquiries = None
-        other_inquiries = None
-        traffic_ok = False
-        inquiry_status = "missing"
-        ga4_today_sessions = None
-        ga4_today_active = None
-        try:
-            print("[INFO] today_traffic_report: dimensions=[], metrics=[sessions,activeUsers], filter=none")
-            print(f"[INFO] today_traffic_report: range={today}~{today}")
-            totals = self.ga4.run_report([], ["sessions", "activeUsers"], today, today)
-            if totals:
-                traffic_ok = True
-                ga4_today_sessions = float(totals[0].get("sessions", 0))
-                ga4_today_active = float(totals[0].get("activeUsers", 0))
-                print(f"[INFO] today_traffic_report: rows={len(totals)}, sessions={ga4_today_sessions}, activeUsers={ga4_today_active}")
-            else:
-                print("[INFO] today_traffic_report: rows=0")
-            print("[INFO] today_traffic_report: dimensions=[sessionMedium], metrics=[sessions], filter=none")
-            print(f"[INFO] today_traffic_report: range={today}~{today} (organic sessions)")
-            rows = self.ga4.run_report(["sessionMedium"], ["sessions"], today, today)
-            if rows:
-                traffic_ok = True
-                organic_sessions_total = sum(
-                    float(row.get("sessions", 0))
-                    for row in rows
-                    if (row.get("sessionMedium") or "").lower() == "organic"
-                )
-                print(f"[INFO] today_traffic_report: rows={len(rows)}, organic_sessions={organic_sessions_total}")
-            else:
-                print("[INFO] today_traffic_report: rows=0 (organic sessions)")
-        except Exception:
-            total_inquiries = None
-            seo_inquiries = None
-            ads_inquiries = None
-            direct_inquiries = None
-            other_inquiries = None
-            inquiry_status = "missing"
-
-        inquiry_log = self._load_inquiry_log(end)
-        if inquiry_log["status"] != "ok":
-            total_inquiries = None
-            seo_inquiries = None
-            ads_inquiries = None
-            direct_inquiries = None
-            other_inquiries = None
-            inquiry_status = "missing"
-        else:
-            today_rows = [row for row in inquiry_log["rows"] if row["date_kst"] == today]
-            seo_inquiries = 0.0
-            ads_inquiries = 0.0
-            direct_inquiries = 0.0
-            other_inquiries = 0.0
-            for row in today_rows:
-                channel = self._classify_inquiry_channel(row)
-                if channel == "seo":
-                    seo_inquiries += 1
-                elif channel == "ads":
-                    ads_inquiries += 1
-                elif channel == "direct":
-                    direct_inquiries += 1
-                else:
-                    other_inquiries += 1
-            total_inquiries = seo_inquiries + ads_inquiries + direct_inquiries + other_inquiries
-            print(
-                "[INFO] 오늘 문의(폼 제출) 집계: "
-                f"총 {format_int(total_inquiries)}, SEO {format_int(seo_inquiries)}, "
-                f"Ads {format_int(ads_inquiries)}, Direct {format_int(direct_inquiries)}, "
-                f"기타 {format_int(other_inquiries)}"
-            )
-            for row in today_rows[:5]:
-                print(
-                    "[INFO] 문의 샘플: "
-                    f"{row['timestamp'].isoformat()} / {row.get('country','-')} / "
-                    f"{self._mask_email(row.get('email',''))} / "
-                    f"{row.get('source','-')} / {row.get('medium','-')} / "
-                    f"{row.get('referrer','-')}"
-                )
-            if today_rows:
-                inquiry_status = "ok"
-            else:
-                inquiry_status = "pending" if traffic_ok else "ok"
-
-        visitors = ga4_today_active
-
-        organic_sessions = None
-        try:
-            print("[INFO] today_traffic_report: dimensions=[sessionMedium], metrics=[sessions], filter=none (SEO sessions)")
-            print(f"[INFO] today_traffic_report: range={today}~{today} (SEO sessions)")
-            rows = self.ga4.run_report(["sessionMedium"], ["sessions"], today, today)
-            if rows:
-                traffic_ok = True
-                organic_sessions = 0.0
-                for row in rows:
-                    if row.get("sessionMedium") == "organic":
-                        organic_sessions += float(row.get("sessions", 0))
-                print(f"[INFO] today_traffic_report: rows={len(rows)}, organic_sessions={organic_sessions}")
-            else:
-                print("[INFO] today_traffic_report: rows=0 (SEO sessions)")
-        except Exception:
-            organic_sessions = None
-
-        top_landing = None
-        top_landing_label = "오늘 가장 많이 본 페이지"
-        try:
-            print("[INFO] today_traffic_report: dimensions=[landingPagePlusQueryString], metrics=[sessions], filter=none")
-            print(f"[INFO] today_traffic_report: range={today}~{today} (landing page)")
-            rows = self.ga4.run_report(["landingPagePlusQueryString"], ["sessions"], today, today, limit=1000)
-            if rows:
-                traffic_ok = True
-                rows.sort(key=lambda r: float(r.get("sessions", 0)), reverse=True)
-                top_landing = rows[0].get("landingPagePlusQueryString")
-                print(f"[INFO] today_traffic_report: rows={len(rows)}, top_landing={top_landing}")
-            else:
-                print("[INFO] today_traffic_report: rows=0 (landing page)")
-        except Exception:
-            top_landing = None
-        if top_landing is None:
-            last_7_start = end - timedelta(days=6)
-            try:
-                rows = self.ga4.run_report(
-                    ["landingPagePlusQueryString"],
-                    ["sessions"],
-                    last_7_start.isoformat(),
-                    today,
-                    limit=1000,
-                )
-                if rows:
-                    rows.sort(key=lambda r: float(r.get("sessions", 0)), reverse=True)
-                    top_landing = rows[0].get("landingPagePlusQueryString")
-                    top_landing_label = "최근 7일 최다 페이지"
-            except Exception:
-                top_landing = None
-
-        ads_today = ads_daily.get(today, {"cost": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0})
-        ads_ctr = safe_div(ads_today["clicks"], ads_today["impressions"]) * 100 if ads_today["impressions"] else None
-
         def format_count(value: float | str | None) -> str:
             if value is None:
                 return "데이터 없음"
@@ -1368,55 +1227,75 @@ class ReportGenerator:
                 return formatter(value), None
             return str(value), None
 
-        def display_traffic(value: float | str | None, formatter=None) -> tuple[str, str | None]:
-            if not traffic_ok:
-                return "데이터 없음", "GA4 오늘 데이터가 없습니다."
-            return display(value, formatter)
-
-        def display_inquiry(value: float | str | None, formatter=None) -> tuple[str, str | None]:
-            if inquiry_status == "pending":
-                return "집계중", "문의 로그 당일 반영 지연 가능"
-            if inquiry_status == "missing":
-                return "데이터 없음", "문의 데이터 소스 로드 실패"
-            return display(value, formatter)
-
-        visitor_label = "오늘 방문자 수(활성 사용자)"
-        if traffic_ok and (visitors is None or (visitors == 0 and ga4_today_sessions and ga4_today_sessions > 0)):
-            visitors = ga4_today_sessions
-            visitor_label = "오늘 방문자 수(세션)"
-
-        cards = []
-        for label, value, formatter in [
-            ("오늘 총 문의 수(폼 제출)", total_inquiries, format_count),
-            (visitor_label, visitors, lambda v: format_int(v)),
-            ("오늘 쓴 돈(광고비)", ads_today["cost"], format_currency),
-            ("오늘 SEO 방문자 수(세션)", organic_sessions, lambda v: format_int(v)),
-            ("오늘 SEO 문의 수(폼 제출)", seo_inquiries, format_count),
-            ("오늘 Google Ads 문의 수(폼 제출)", ads_inquiries, format_count),
-            ("오늘 Direct 문의 수(폼 제출)", direct_inquiries, format_count),
-            ("오늘 기타 문의 수(폼 제출)", other_inquiries, format_count),
-            (top_landing_label, top_landing, None),
-            ("오늘 광고 클릭률(CTR)", ads_ctr, lambda v: format_percent(v, 1)),
-            ("오늘 광고 노출 수", float(ads_today["impressions"]), lambda v: format_int(v)),
-        ]:
-            if label in (
-                "오늘 총 문의 수(폼 제출)",
-                "오늘 방문자 수(활성 사용자)",
-                "오늘 SEO 방문자 수(세션)",
-                "오늘 SEO 문의 수(폼 제출)",
-                "오늘 Google Ads 문의 수(폼 제출)",
-                "오늘 Direct 문의 수(폼 제출)",
-                "오늘 기타 문의 수(폼 제출)",
-                "오늘 가장 많이 본 페이지",
-            ):
-                if "문의 수(폼 제출)" in label:
-                    value_text, tooltip = display_inquiry(value, formatter)
+        def build_block(target: date, label: str, pending_if_empty: bool) -> dict:
+            target_key = target.isoformat()
+            ga4_ok = False
+            ga4_pending = False
+            sessions = None
+            active_users = None
+            organic_sessions = None
+            try:
+                print("[INFO] today_traffic_report: dimensions=[], metrics=[sessions,activeUsers], filter=none")
+                print(f"[INFO] today_traffic_report: range={target_key}~{target_key}")
+                totals = self.ga4.run_report([], ["sessions", "activeUsers"], target_key, target_key)
+                if totals:
+                    ga4_ok = True
+                    sessions = float(totals[0].get("sessions", 0))
+                    active_users = float(totals[0].get("activeUsers", 0))
+                    print(f"[INFO] today_traffic_report: rows={len(totals)}, sessions={sessions}, activeUsers={active_users}")
                 else:
-                    value_text, tooltip = display_traffic(value, formatter)
-            else:
-                value_text, tooltip = display(value, formatter)
-            cards.append({"label": label, "value": value_text, "tooltip": tooltip})
-        return {"cards": cards, "date": today}
+                    ga4_pending = pending_if_empty
+                    print("[INFO] today_traffic_report: rows=0")
+                print("[INFO] today_traffic_report: dimensions=[sessionMedium], metrics=[sessions], filter=none (SEO)")
+                print(f"[INFO] today_traffic_report: range={target_key}~{target_key} (SEO sessions)")
+                rows = self.ga4.run_report(["sessionMedium"], ["sessions"], target_key, target_key)
+                if rows:
+                    ga4_ok = True
+                    organic_sessions = 0.0
+                    for row in rows:
+                        if (row.get("sessionMedium") or "").lower() == "organic":
+                            organic_sessions += float(row.get("sessions", 0))
+                    print(f"[INFO] today_traffic_report: rows={len(rows)}, organic_sessions={organic_sessions}")
+                else:
+                    ga4_pending = pending_if_empty
+                    print("[INFO] today_traffic_report: rows=0 (SEO sessions)")
+            except Exception:
+                ga4_ok = False
+                ga4_pending = False
+
+            ads = ads_daily.get(target_key, {"cost": 0.0, "impressions": 0, "clicks": 0, "conversions": 0.0})
+            ads_ctr = safe_div(ads["clicks"], ads["impressions"]) * 100 if ads["impressions"] else 0.0
+            ads_cpa = safe_div(ads["cost"], ads["conversions"]) if ads["conversions"] else 0.0
+
+            def display_ga4(value: float | str | None, formatter=None) -> tuple[str, str | None]:
+                if ga4_pending and not ga4_ok:
+                    return "집계중", "GA4는 당일 데이터가 지연될 수 있음"
+                if not ga4_ok:
+                    return "데이터 없음", "GA4 데이터가 없습니다."
+                return display(value, formatter)
+
+            cards = []
+            for label_text, value, formatter, is_ga4 in [
+                ("방문자(활성 사용자)", active_users, format_int, True),
+                ("GA4 세션", sessions, format_int, True),
+                ("SEO 세션(organic)", organic_sessions, format_int, True),
+                ("Ads 비용", ads["cost"], format_currency, False),
+                ("Ads 전환", ads["conversions"], lambda v: format_count(v), False),
+                ("CPA", ads_cpa, format_currency, False),
+                ("CTR", ads_ctr, lambda v: format_percent(v, 1), False),
+                ("노출", ads["impressions"], format_int, False),
+                ("클릭", ads["clicks"], format_int, False),
+            ]:
+                if is_ga4:
+                    value_text, tooltip = display_ga4(value, formatter)
+                else:
+                    value_text, tooltip = display(value, formatter)
+                cards.append({"label": label_text, "value": value_text, "tooltip": tooltip})
+            return {"label": label, "date": target_key, "cards": cards}
+
+        today_block = build_block(end, "오늘(부분)", pending_if_empty=True)
+        yesterday_block = build_block(end - timedelta(days=1), "어제(확정)", pending_if_empty=False)
+        return {"blocks": [today_block, yesterday_block]}
 
     def _load_inquiry_log(self, end: date) -> dict:
         log_url = os.getenv("INQUIRY_LOG_URL", "").strip()
