@@ -427,6 +427,7 @@
     </header>
     <section class="section">
       <div class="section-title">오늘/어제 핵심 요약</div>
+      <div class="note"><a href="#ads-conversion-debug">Ads 전환 진단 보기</a></div>
       {% for block in top_strip.blocks %}
       <div class="chart-title">{{ block.label }} · {{ block.date }}</div>
       <div class="top-strip">
@@ -941,12 +942,22 @@
           </table>
         </div>
         <div class="divider"></div>
-        <div class="chart-title">Ads 전환 진단(디버그)</div>
+        <div class="chart-title" id="ads-conversion-debug">Ads 전환 진단(디버그)</div>
         <div class="note">
           대시보드는 KST 기준 어제를 사용합니다. Ads 보고 날짜는 계정 타임존 영향이 있을 수 있습니다.
           (Ads timezone: {{ ads_conversion_debug.timezone }})
         </div>
         {% if ads_conversion_debug.rows %}
+        <div class="top-strip">
+          <div class="strip-card">
+            <div class="strip-label">Ads 전환 합계</div>
+            <div class="strip-value">{{ ads_conversion_debug.total_conversions }}</div>
+          </div>
+          <div class="strip-card">
+            <div class="strip-label">Ads 전체전환 합계</div>
+            <div class="strip-value">{{ ads_conversion_debug.total_all_conversions }}</div>
+          </div>
+        </div>
         <div class="note">Ads 전환 {{ ads_conversion_debug.total_conversions }} / 전체전환 {{ ads_conversion_debug.total_all_conversions }}</div>
         <div class="note">{{ ads_conversion_debug.note }}</div>
         <div class="table-wrap">
