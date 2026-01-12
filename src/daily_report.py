@@ -312,7 +312,7 @@ class ReportGenerator:
             keyword_tables,
             search_terms,
         )
-        weekly_active_users = self._build_weekly_active_users_chart(last_7_dates, ga4_daily, ga4_has_data)
+        weekly_active_users = self._build_weekly_active_users_chart(last_7_dates, ga4_daily, ga4_has_data, ads_daily)
         waste_notes = self._build_waste_notes(wasted_summary)
         waste_actions = self._build_waste_actions(action_cards_by_range["7d"], tables)
         growth_notes = self._build_growth_notes(keyword_tables)
@@ -1693,14 +1693,51 @@ class ReportGenerator:
             f"특히 {top_item}가 비용 상위입니다.",
         ]
 
-    def _build_weekly_active_users_chart(self, last_7_dates: list[str], ga4_daily: dict, ga4_has_data: bool) -> dict:
+    def _build_weekly_active_users_chart(
+        self,
+        last_7_dates: list[str],
+        ga4_daily: dict,
+        ga4_has_data: bool,
+        ads_daily: dict,
+    ) -> dict:
         if not last_7_dates or not ga4_has_data:
-            return {"has_data": False, "labels": [], "values": []}
+            return {"has_data": False, "labels": [], "active_users": [], "ads_conversions": [], "seo_conversions": []}
         labels = [f"{date_key[5:7]}-{date_key[8:10]}" for date_key in last_7_dates]
-        values = [float(ga4_daily[date_key]["activeUsers"]) for date_key in last_7_dates]
-        if not any(values):
-            return {"has_data": False, "labels": labels, "values": values}
-        return {"has_data": True, "labels": labels, "values": values}
+        active_users = [float(ga4_daily[date_key]["activeUsers"]) for date_key in last_7_dates]
+        if not any(active_users):
+            return {"has_data": False, "labels": labels, "active_users": active_users, "ads_conversions": [], "seo_conversions": []}
+
+        ads_conversions = [float(ads_daily[date_key]["conversions"]) for date_key in last_7_dates]
+
+        seo_conversions = {date_key: 0.0 for date_key in last_7_dates}
+        try:
+            rows = self.ga4.run_report(
+                ["date", "eventName", "sessionMedium"],
+                ["eventCount"],
+                last_7_dates[0],
+                last_7_dates[-1],
+                limit=100000,
+            )
+            for row in rows:
+                event_name = (row.get("eventName") or "").lower()
+                if event_name not in INQUIRY_EVENT_NAMES:
+                    continue
+                if row.get("sessionMedium") != "organic":
+                    continue
+                date_key = parse_ga4_date(row.get("date", ""))
+                if date_key in seo_conversions:
+                    seo_conversions[date_key] += float(row.get("eventCount", 0))
+        except Exception:
+            seo_conversions = {date_key: 0.0 for date_key in last_7_dates}
+
+        seo_values = [seo_conversions[date_key] for date_key in last_7_dates]
+        return {
+            "has_data": True,
+            "labels": labels,
+            "active_users": active_users,
+            "ads_conversions": ads_conversions,
+            "seo_conversions": seo_values,
+        }
 
     def _build_waste_actions(self, action_cards: list[dict], tables: dict) -> list[str]:
         pause = ", ".join(action_cards[0]["items_list"]) if action_cards else "없음"
@@ -2268,10 +2305,12 @@ class ReportGenerator:
             }
         if weekly_active_users.get("has_data"):
             specs["weekly_active_users"] = {
-                "type": "bar",
+                "type": "weekly_active_users",
                 "title": "최근 7일 방문자(활성 사용자)",
                 "labels": weekly_active_users.get("labels", []),
-                "values": weekly_active_users.get("values", []),
+                "values": weekly_active_users.get("active_users", []),
+                "ads_conversions": weekly_active_users.get("ads_conversions", []),
+                "seo_conversions": weekly_active_users.get("seo_conversions", []),
                 "has_data": True,
                 "value_format": "number",
                 "figsize": CHART_FIGSIZE,
@@ -2670,6 +2709,37 @@ class ReportGenerator:
         fig.savefig(path, bbox_inches="tight")
         plt.close(fig)
 
+    def _plot_weekly_active_users(
+        self,
+        path: Path,
+        labels: list[str],
+        active_users: list[float],
+        ads_conversions: list[float],
+        seo_conversions: list[float],
+        title: str,
+    ):
+        fig, ax = plt.subplots(figsize=CHART_FIGSIZE, dpi=CHART_DPI)
+        ax.bar(labels, active_users, color=ACCENT_COLOR, alpha=0.8, label="활성 사용자")
+        ax.set_title(title, fontsize=CHART_TITLE_SIZE, loc="left", pad=12)
+        ax.tick_params(axis="x", labelrotation=30, labelsize=CHART_TICK_SIZE)
+        ax.tick_params(axis="y", labelsize=CHART_TICK_SIZE)
+        ax.grid(axis="y", color="#e5e7eb", linewidth=0.6, alpha=0.8)
+        ax.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x):,}"))
+
+        ax2 = ax.twinx()
+        ax2.plot(labels, ads_conversions, color="#f59e0b", linewidth=2, marker="o", label="Ads 전환")
+        ax2.plot(labels, seo_conversions, color="#10b981", linewidth=2, marker="o", label="SEO 전환")
+        ax2.tick_params(axis="y", labelsize=CHART_TICK_SIZE)
+        ax2.yaxis.set_major_formatter(FuncFormatter(lambda x, _: f"{int(x):,}"))
+
+        lines, labels_1 = ax.get_legend_handles_labels()
+        lines2, labels_2 = ax2.get_legend_handles_labels()
+        ax2.legend(lines + lines2, labels_1 + labels_2, loc="upper left", fontsize=CHART_TICK_SIZE)
+
+        fig.tight_layout()
+        fig.savefig(path, bbox_inches="tight")
+        plt.close(fig)
+
     def _plot_heatmap(self, path: Path, matrix: list[list[float]], labels: list[str], title: str):
         fig, ax = plt.subplots(figsize=CHART_FIGSIZE_WIDE, dpi=CHART_DPI)
         im = ax.imshow(matrix, aspect="auto")
@@ -2755,6 +2825,15 @@ class ReportGenerator:
                 )
             elif spec["type"] == "heatmap":
                 self._plot_heatmap(path, spec["matrix"], spec["labels"], spec["title"])
+            elif spec["type"] == "weekly_active_users":
+                self._plot_weekly_active_users(
+                    path,
+                    spec["labels"],
+                    spec["values"],
+                    spec.get("ads_conversions", []),
+                    spec.get("seo_conversions", []),
+                    spec["title"],
+                )
             chart_paths[key] = filename
         return chart_paths
 
