@@ -614,7 +614,8 @@
       </details>
     </section>
     <section class="section">
-      <div class="section-title">국가별 키워드 효율 분석</div>
+      <div class="section-title">국가별 키워드 효율 분석 (추정치)</div>
+      <div class="note">Google Ads API 제약으로 국가×키워드 직접 보고가 불가하여, 국가별 AdGroup 성과를 키워드 비중으로 배분한 추정치입니다.</div>
       <div class="toggle-group" data-range-toggle="country-keywords">
         <button class="toggle-btn active" data-range="30d">최근 30일</button>
         <button class="toggle-btn" data-range="all">전체기간</button>
@@ -634,34 +635,32 @@
             <div class="note">
               총비용 {{ country.cost_display }} · 총전환 {{ country.conversions_display }} · 평균 CPA {{ country.avg_cpa_display }} · 전환0 비용 비중 {{ country.waste_share_display }}
             </div>
-            <div class="chart-title">좋은 키워드 TOP10 (CPA 낮음)</div>
-            {% if country.good_keywords %}
+            <div class="chart-title">전환 많은 키워드 TOP10</div>
+            {% if country.top_conversions %}
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>캠페인</th>
-                    <th>광고그룹</th>
                     <th>키워드</th>
                     <th>매칭타입</th>
                     <th>비용</th>
                     <th>클릭</th>
                     <th>CTR</th>
                     <th>전환</th>
+                    <th>CVR</th>
                     <th>CPA</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {% for row in country.good_keywords %}
+                  {% for row in country.top_conversions %}
                   <tr>
-                    <td>{{ row.campaign }}</td>
-                    <td>{{ row.ad_group }}</td>
                     <td>{{ row.keyword }}</td>
                     <td>{{ row.match_type }}</td>
                     <td>{{ row.cost_display }}</td>
                     <td>{{ row.clicks_display }}</td>
                     <td>{{ row.ctr_display }}</td>
                     <td>{{ row.conversions_display }}</td>
+                    <td>{{ row.cvr_display }}</td>
                     <td>{{ row.cpa_display }}</td>
                   </tr>
                   {% endfor %}
@@ -671,33 +670,31 @@
             {% else %}
             <div class="empty-state">데이터 없음</div>
             {% endif %}
-            <div class="chart-title">나쁜 키워드 TOP10 (전환 0)</div>
-            {% if country.bad_keywords %}
+            <div class="chart-title">비용 큰 키워드 TOP10</div>
+            {% if country.top_cost %}
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>캠페인</th>
-                    <th>광고그룹</th>
                     <th>키워드</th>
                     <th>매칭타입</th>
                     <th>비용</th>
                     <th>클릭</th>
                     <th>CTR</th>
                     <th>전환</th>
+                    <th>CVR</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {% for row in country.bad_keywords %}
+                  {% for row in country.top_cost %}
                   <tr>
-                    <td>{{ row.campaign }}</td>
-                    <td>{{ row.ad_group }}</td>
                     <td>{{ row.keyword }}</td>
                     <td>{{ row.match_type }}</td>
                     <td>{{ row.cost_display }}</td>
                     <td>{{ row.clicks_display }}</td>
                     <td>{{ row.ctr_display }}</td>
                     <td>{{ row.conversions_display }}</td>
+                    <td>{{ row.cvr_display }}</td>
                   </tr>
                   {% endfor %}
                 </tbody>
@@ -706,6 +703,78 @@
             {% else %}
             <div class="empty-state">데이터 없음</div>
             {% endif %}
+            <div class="chart-title">CPA 높은 키워드 TOP10</div>
+            {% if country.worst_cpa %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>키워드</th>
+                    <th>매칭타입</th>
+                    <th>비용</th>
+                    <th>클릭</th>
+                    <th>CTR</th>
+                    <th>전환</th>
+                    <th>CVR</th>
+                    <th>CPA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in country.worst_cpa %}
+                  <tr>
+                    <td>{{ row.keyword }}</td>
+                    <td>{{ row.match_type }}</td>
+                    <td>{{ row.cost_display }}</td>
+                    <td>{{ row.clicks_display }}</td>
+                    <td>{{ row.ctr_display }}</td>
+                    <td>{{ row.conversions_display }}</td>
+                    <td>{{ row.cvr_display }}</td>
+                    <td>{{ row.cpa_display }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <div class="empty-state">데이터 없음</div>
+            {% endif %}
+            <details>
+              <summary>전체 보기</summary>
+              {% if country.all_rows %}
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>키워드</th>
+                      <th>매칭타입</th>
+                      <th>비용</th>
+                      <th>클릭</th>
+                      <th>CTR</th>
+                      <th>전환</th>
+                      <th>CVR</th>
+                      <th>CPA</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for row in country.all_rows %}
+                    <tr>
+                      <td>{{ row.keyword }}</td>
+                      <td>{{ row.match_type }}</td>
+                      <td>{{ row.cost_display }}</td>
+                      <td>{{ row.clicks_display }}</td>
+                      <td>{{ row.ctr_display }}</td>
+                      <td>{{ row.conversions_display }}</td>
+                      <td>{{ row.cvr_display }}</td>
+                      <td>{{ row.cpa_display }}</td>
+                    </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+              {% else %}
+              <div class="empty-state">데이터 없음</div>
+              {% endif %}
+            </details>
           </details>
           {% endfor %}
         </div>

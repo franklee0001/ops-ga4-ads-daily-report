@@ -907,6 +907,30 @@ class ReportGenerator:
                 }
         return name_map
 
+    def _get_geo_target_names_by_id(self, geo_ids: list[int]) -> dict:
+        if not geo_ids:
+            return {}
+        name_map = {}
+        chunk_size = 100
+        for i in range(0, len(geo_ids), chunk_size):
+            chunk = geo_ids[i:i + chunk_size]
+            ids = ", ".join(str(item) for item in chunk)
+            query = (
+                "SELECT geo_target_constant.id, geo_target_constant.name, geo_target_constant.country_code "
+                "FROM geo_target_constant "
+                f"WHERE geo_target_constant.id IN ({ids})"
+            )
+            try:
+                rows = self.ads.run_query(query)
+            except Exception:
+                continue
+            for row in rows:
+                name_map[row.geo_target_constant.id] = {
+                    "name": row.geo_target_constant.name,
+                    "code": row.geo_target_constant.country_code,
+                }
+        return name_map
+
     def _build_active_keywords_table(self, start_date: date, end_date: date) -> dict:
         if start_date > end_date:
             return {
@@ -1091,6 +1115,63 @@ class ReportGenerator:
             "debug": debug,
         }
 
+    def _load_geo_by_campaign(self, start_date: date, end_date: date) -> list[dict]:
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        query = (
+            "SELECT campaign.id, campaign.advertising_channel_type, geographic_view.country_criterion_id, "
+            "metrics.impressions, metrics.clicks, metrics.cost_micros, metrics.conversions "
+            "FROM geographic_view "
+            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
+            "AND campaign.advertising_channel_type = 'SEARCH' "
+            "AND metrics.impressions > 0"
+        )
+        rows = self.ads.run_query(query)
+        results = []
+        for row in rows:
+            results.append({
+                "campaign_id": row.campaign.id,
+                "geo_id": row.geographic_view.country_criterion_id,
+                "impressions": row.metrics.impressions,
+                "clicks": row.metrics.clicks,
+                "cost_micros": row.metrics.cost_micros,
+                "conversions": row.metrics.conversions,
+            })
+        return results
+
+    def _load_keywords_by_ad_group(self, start_date: date, end_date: date) -> list[dict]:
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        query = (
+            "SELECT campaign.id, ad_group.id, ad_group_criterion.criterion_id, "
+            "ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, "
+            "ad_group_criterion.status, metrics.impressions, metrics.clicks, "
+            "metrics.cost_micros, metrics.conversions "
+            "FROM keyword_view "
+            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
+            "AND campaign.advertising_channel_type = 'SEARCH' "
+            "AND campaign.status = 'ENABLED' "
+            "AND ad_group.status = 'ENABLED' "
+            "AND ad_group_criterion.status = 'ENABLED' "
+            "AND metrics.impressions > 0"
+        )
+        rows = self.ads.run_query(query)
+        results = []
+        for row in rows:
+            keyword = row.ad_group_criterion.keyword
+            results.append({
+                "campaign_id": row.campaign.id,
+                "ad_group_id": row.ad_group.id,
+                "keyword": keyword.text,
+                "match_type": self._format_match_type(str(keyword.match_type)),
+                "status": str(row.ad_group_criterion.status),
+                "impressions": row.metrics.impressions,
+                "clicks": row.metrics.clicks,
+                "cost_micros": row.metrics.cost_micros,
+                "conversions": row.metrics.conversions,
+            })
+        return results
+
     def _build_keyword_country_efficiency(self, start_date: date, end_date: date) -> dict:
         if start_date > end_date:
             return {
@@ -1102,31 +1183,15 @@ class ReportGenerator:
                     "query_window": f"{start_date.isoformat()} ~ {end_date.isoformat()}",
                     "customer_id": self.customer_id,
                     "timezone": self._get_ads_timezone(),
-                    "gaql": "search_term_view + geo_target_country",
+                    "gaql": "geographic_view + keyword_view",
                 },
             }
         start = start_date.isoformat()
         end = end_date.isoformat()
         timezone = self._get_ads_timezone()
-        query = (
-            "SELECT segments.geo_target_country, campaign.name, ad_group.name, "
-            "search_term_view.search_term, metrics.impressions, metrics.clicks, metrics.ctr, "
-            "metrics.cost_micros, metrics.conversions, metrics.all_conversions "
-            "FROM search_term_view "
-            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
-            "AND campaign.advertising_channel_type = 'SEARCH' "
-            "AND metrics.impressions > 0"
-        )
         try:
-            rows = self.ads.run_query(query)
-            debug = {
-                "status": "success",
-                "error": "",
-                "query_window": f"{start} ~ {end}",
-                "customer_id": self.customer_id,
-                "timezone": timezone,
-                "gaql": "search_term_view + geo_target_country",
-            }
+            geo_rows = self._load_geo_by_campaign(start_date, end_date)
+            keyword_rows = self._load_keywords_by_ad_group(start_date, end_date)
         except Exception as exc:
             error_text = " ".join(str(exc).splitlines()).strip()
             return {
@@ -1138,71 +1203,90 @@ class ReportGenerator:
                     "query_window": f"{start} ~ {end}",
                     "customer_id": self.customer_id,
                     "timezone": timezone,
-                "gaql": "search_term_view + geo_target_country",
+                    "gaql": "geographic_view + keyword_view",
                 },
             }
 
-        resource_names = []
-        for row in rows:
-            resource = str(row.segments.geo_target_country)
-            if resource:
-                resource_names.append(resource)
-        geo_map = self._get_geo_target_names(sorted(set(resource_names)))
+        print(f"[DEBUG] country-keyword estimate rows: geo={len(geo_rows)}, keyword={len(keyword_rows)}")
+        geo_ids = [row["geo_id"] for row in geo_rows if row.get("geo_id")]
+        geo_map = self._get_geo_target_names_by_id(sorted(set(geo_ids)))
+
+        keyword_groups = {}
+        for row in keyword_rows:
+            key = row["campaign_id"]
+            keyword_groups.setdefault(key, []).append(row)
 
         country_map = {}
-        for row in rows:
-            resource = str(row.segments.geo_target_country)
-            info = geo_map.get(resource, {})
-            country_name = info.get("name") or resource or "알 수 없음"
-            country_code = info.get("code") or ""
+        sample_logged = False
+        for geo_row in geo_rows:
+            key = geo_row["campaign_id"]
+            keywords = keyword_groups.get(key, [])
+            if not keywords:
+                continue
+            total_cost = sum(k["cost_micros"] for k in keywords)
+            total_clicks = sum(k["clicks"] for k in keywords)
+            if total_cost <= 0 and total_clicks <= 0:
+                continue
+            geo_id = geo_row["geo_id"]
+            info = geo_map.get(geo_id, {})
+            country_name = info.get("name") or f"Geo {geo_id}" or "알 수 없음"
             bucket = country_map.setdefault(country_name, {
                 "country": country_name,
-                "country_code": country_code,
                 "cost": 0.0,
                 "conversions": 0.0,
-                "all_conversions": 0.0,
                 "waste_cost": 0.0,
                 "rows": [],
             })
-            cost = row.metrics.cost_micros / 1_000_000
-            conversions = row.metrics.conversions or 0
-            all_conversions = row.metrics.all_conversions or 0
-            ctr = row.metrics.ctr * 100 if row.metrics.ctr else safe_div(row.metrics.clicks, row.metrics.impressions) * 100
-            cpa = safe_div(cost, conversions) if conversions else float("inf")
-            cpc = safe_div(cost, row.metrics.clicks)
-            bucket["cost"] += cost
-            bucket["conversions"] += conversions
-            bucket["all_conversions"] += all_conversions
-            if conversions == 0:
-                bucket["waste_cost"] += cost
-            bucket["rows"].append({
-                "campaign": row.campaign.name,
-                "ad_group": row.ad_group.name,
-                "keyword": row.search_term_view.search_term,
-                "match_type": "검색어",
-                "status": "-",
-                "impressions": row.metrics.impressions,
-                "clicks": row.metrics.clicks,
-                "ctr": ctr,
-                "cost": cost,
-                "conversions": conversions,
-                "all_conversions": all_conversions,
-                "cpa": cpa,
-                "cpc": cpc,
-            })
+            geo_cost = geo_row["cost_micros"] / 1_000_000
+            geo_clicks = geo_row["clicks"]
+            geo_conversions = geo_row["conversions"]
+            geo_impressions = geo_row["impressions"]
+            for keyword in keywords:
+                if total_cost > 0:
+                    share = keyword["cost_micros"] / total_cost
+                else:
+                    share = keyword["clicks"] / total_clicks if total_clicks > 0 else 0
+                est_cost = geo_cost * share
+                est_clicks = geo_clicks * share
+                est_conversions = geo_conversions * share
+                est_impressions = geo_impressions * share
+                cpa = safe_div(est_cost, est_conversions) if est_conversions else float("inf")
+                cvr = safe_div(est_conversions, est_clicks) if est_clicks else 0.0
+                ctr = safe_div(est_clicks, est_impressions) * 100 if est_impressions else 0.0
+                bucket["cost"] += est_cost
+                bucket["conversions"] += est_conversions
+                if est_conversions == 0:
+                    bucket["waste_cost"] += est_cost
+                bucket["rows"].append({
+                    "keyword": keyword["keyword"],
+                    "match_type": keyword["match_type"],
+                    "status": keyword["status"],
+                    "cost": est_cost,
+                    "clicks": est_clicks,
+                    "conversions": est_conversions,
+                    "cpa": cpa,
+                    "cvr": cvr,
+                    "ctr": ctr,
+                    "impressions": est_impressions,
+                })
+                if not sample_logged:
+                    print(
+                        f"[DEBUG] sample allocation {country_name}: {keyword['keyword']} "
+                        f"share={share:.3f} cost={est_cost:.2f} conv={est_conversions:.2f}"
+                    )
+                    sample_logged = True
 
         countries = []
         for country in country_map.values():
             rows_list = country["rows"]
-            good = [row for row in rows_list if row["conversions"] >= 1 and row["clicks"] >= 3]
-            bad = [row for row in rows_list if row["conversions"] == 0 and row["clicks"] >= 3 and row["cost"] > 0]
-            good_sorted = sorted(good, key=lambda r: r["cpa"])[:10]
-            bad_sorted = sorted(bad, key=lambda r: r["cost"], reverse=True)[:10]
+            top_conversions = sorted(rows_list, key=lambda r: r["conversions"], reverse=True)[:10]
+            top_cost = sorted(rows_list, key=lambda r: r["cost"], reverse=True)[:10]
+            worst_cpa = [r for r in rows_list if r["conversions"] >= 1 and r["clicks"] >= 3]
+            worst_cpa_sorted = sorted(worst_cpa, key=lambda r: r["cpa"], reverse=True)[:10]
             avg_cpa = safe_div(country["cost"], country["conversions"]) if country["conversions"] else float("inf")
             waste_share = safe_div(country["waste_cost"], country["cost"]) if country["cost"] else 0.0
             countries.append({
                 "country": country["country"],
-                "country_code": country["country_code"],
                 "cost": country["cost"],
                 "conversions": country["conversions"],
                 "avg_cpa": avg_cpa,
@@ -1211,40 +1295,71 @@ class ReportGenerator:
                 "conversions_display": format_float(country["conversions"], 1),
                 "avg_cpa_display": format_currency(avg_cpa) if country["conversions"] else "∞",
                 "waste_share_display": format_percent(waste_share * 100, 1),
-                "good_keywords": [
+                "top_conversions": [
                     {
-                        "campaign": row["campaign"],
-                        "ad_group": row["ad_group"],
                         "keyword": row["keyword"],
                         "match_type": row["match_type"],
                         "cost_display": format_currency(row["cost"]),
                         "clicks_display": format_int(row["clicks"]),
                         "ctr_display": f"{format_float(row['ctr'], 2)}%",
-                        "conversions_display": format_float(row["conversions"], 1),
+                        "conversions_display": format_float(row["conversions"], 2),
                         "cpa_display": format_currency(row["cpa"]) if row["conversions"] else "-",
+                        "cvr_display": format_percent(row["cvr"] * 100, 2),
                     }
-                    for row in good_sorted
+                    for row in top_conversions
                 ],
-                "bad_keywords": [
+                "top_cost": [
                     {
-                        "campaign": row["campaign"],
-                        "ad_group": row["ad_group"],
                         "keyword": row["keyword"],
                         "match_type": row["match_type"],
                         "cost_display": format_currency(row["cost"]),
                         "clicks_display": format_int(row["clicks"]),
                         "ctr_display": f"{format_float(row['ctr'], 2)}%",
-                        "conversions_display": format_float(row["conversions"], 1),
-                        "cpa_display": "-",
+                        "conversions_display": format_float(row["conversions"], 2),
+                        "cpa_display": format_currency(row["cpa"]) if row["conversions"] else "-",
+                        "cvr_display": format_percent(row["cvr"] * 100, 2),
                     }
-                    for row in bad_sorted
+                    for row in top_cost
+                ],
+                "worst_cpa": [
+                    {
+                        "keyword": row["keyword"],
+                        "match_type": row["match_type"],
+                        "cost_display": format_currency(row["cost"]),
+                        "clicks_display": format_int(row["clicks"]),
+                        "ctr_display": f"{format_float(row['ctr'], 2)}%",
+                        "conversions_display": format_float(row["conversions"], 2),
+                        "cpa_display": format_currency(row["cpa"]) if row["conversions"] else "-",
+                        "cvr_display": format_percent(row["cvr"] * 100, 2),
+                    }
+                    for row in worst_cpa_sorted
+                ],
+                "all_rows": [
+                    {
+                        "keyword": row["keyword"],
+                        "match_type": row["match_type"],
+                        "cost_display": format_currency(row["cost"]),
+                        "clicks_display": format_int(row["clicks"]),
+                        "ctr_display": f"{format_float(row['ctr'], 2)}%",
+                        "conversions_display": format_float(row["conversions"], 2),
+                        "cpa_display": format_currency(row["cpa"]) if row["conversions"] else "-",
+                        "cvr_display": format_percent(row["cvr"] * 100, 2),
+                    }
+                    for row in rows_list
                 ],
             })
         countries.sort(key=lambda item: item["cost"], reverse=True)
         return {
             "window_label": f"{start} ~ {end}",
             "countries": countries,
-            "debug": debug,
+            "debug": {
+                "status": "success",
+                "error": "",
+                "query_window": f"{start} ~ {end}",
+                "customer_id": self.customer_id,
+                "timezone": timezone,
+                "gaql": "geographic_view + keyword_view",
+            },
         }
 
     def _format_match_type(self, match_type: str) -> str:
