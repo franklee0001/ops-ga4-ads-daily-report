@@ -47,9 +47,6 @@ jobs:
           python -m pip install -U pip
           pip install -r requirements.txt
 
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
       - name: Decode secrets to files (NEVER commit)
         env:
           GA4_JSON_B64: ${{ secrets.GA4_JSON_B64 }}
