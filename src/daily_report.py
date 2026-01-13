@@ -257,6 +257,9 @@ class ReportGenerator:
         search_terms = self._get_ads_search_term_waste(last_7_start, last_7_end)
         wasted_summary = self._build_wasted_summary(last_7_dates, ads_daily, keyword_tables, search_terms)
         active_keywords_7d = self._build_active_keywords_table(last_7_start, last_7_end)
+        keywords_all_time = self._build_all_time_keywords(start, end)
+        keyword_country_efficiency_30d = self._build_keyword_country_efficiency(last_30_complete_start, last_30_end)
+        keyword_country_efficiency_all_time = self._build_keyword_country_efficiency(start, end)
         today_date = end
         yesterday_date = end - timedelta(days=1)
         today_keyword_rows = self._get_ads_keyword_rows(today_date, today_date)
@@ -371,6 +374,9 @@ class ReportGenerator:
             "search_terms": search_terms,
             "wasted_summary": wasted_summary,
             "active_keywords_7d": active_keywords_7d,
+            "keywords_all_time": keywords_all_time,
+            "keyword_country_efficiency_30d": keyword_country_efficiency_30d,
+            "keyword_country_efficiency_all_time": keyword_country_efficiency_all_time,
             "conversion_definitions": conversion_definitions,
             "ads_conversion_debug": ads_conversion_debug,
             "exec_summary": exec_summary,
@@ -867,6 +873,40 @@ class ReportGenerator:
             })
         return results
 
+    def _get_ads_timezone(self) -> str:
+        try:
+            tz_rows = self.ads.run_query("SELECT customer.time_zone FROM customer LIMIT 1")
+            if tz_rows:
+                return tz_rows[0].customer.time_zone
+        except Exception:
+            return "unknown"
+        return "unknown"
+
+    def _get_geo_target_names(self, resource_names: list[str]) -> dict:
+        if not resource_names:
+            return {}
+        name_map = {}
+        chunk_size = 100
+        for i in range(0, len(resource_names), chunk_size):
+            chunk = resource_names[i:i + chunk_size]
+            escaped = ", ".join(f"'{name}'" for name in chunk)
+            query = (
+                "SELECT geo_target_constant.resource_name, geo_target_constant.name, "
+                "geo_target_constant.country_code "
+                "FROM geo_target_constant "
+                f"WHERE geo_target_constant.resource_name IN ({escaped})"
+            )
+            try:
+                rows = self.ads.run_query(query)
+            except Exception:
+                continue
+            for row in rows:
+                name_map[row.geo_target_constant.resource_name] = {
+                    "name": row.geo_target_constant.name,
+                    "code": row.geo_target_constant.country_code,
+                }
+        return name_map
+
     def _build_active_keywords_table(self, start_date: date, end_date: date) -> dict:
         if start_date > end_date:
             return {
@@ -877,18 +917,12 @@ class ReportGenerator:
                     "error": "기간이 올바르지 않습니다.",
                     "query_window": f"{start_date.isoformat()} ~ {end_date.isoformat()}",
                     "customer_id": self.customer_id,
-                    "timezone": "unknown",
+                    "timezone": self._get_ads_timezone(),
                 },
             }
         start = start_date.isoformat()
         end = end_date.isoformat()
-        timezone = "unknown"
-        try:
-            tz_rows = self.ads.run_query("SELECT customer.time_zone FROM customer LIMIT 1")
-            if tz_rows:
-                timezone = tz_rows[0].customer.time_zone
-        except Exception:
-            timezone = "unknown"
+        timezone = self._get_ads_timezone()
 
         query = (
             "SELECT campaign.name, ad_group.name, ad_group_criterion.keyword.text, "
@@ -966,6 +1000,252 @@ class ReportGenerator:
                 "waste": cost > 0 and conversions == 0,
             })
         return {"rows": formatted_rows, "total": len(formatted_rows), "debug": debug}
+
+    def _build_all_time_keywords(self, start_date: date, end_date: date) -> dict:
+        if start_date > end_date:
+            return {
+                "rows": [],
+                "total": 0,
+                "window_label": f"{start_date.isoformat()} ~ {end_date.isoformat()}",
+                "debug": {
+                    "status": "error",
+                    "error": "기간이 올바르지 않습니다.",
+                    "query_window": f"{start_date.isoformat()} ~ {end_date.isoformat()}",
+                    "customer_id": self.customer_id,
+                    "timezone": self._get_ads_timezone(),
+                    "gaql": "keyword_view",
+                },
+            }
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        timezone = self._get_ads_timezone()
+        query = (
+            "SELECT campaign.name, ad_group.name, ad_group_criterion.keyword.text, "
+            "ad_group_criterion.keyword.match_type, ad_group_criterion.status, "
+            "metrics.impressions, metrics.clicks, metrics.ctr, metrics.cost_micros, "
+            "metrics.conversions, metrics.all_conversions, metrics.cost_per_conversion "
+            "FROM keyword_view "
+            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
+            "AND campaign.advertising_channel_type = 'SEARCH' "
+            "AND campaign.status = 'ENABLED' "
+            "AND ad_group.status = 'ENABLED' "
+            "AND ad_group_criterion.status = 'ENABLED' "
+            "AND metrics.impressions > 0"
+        )
+        try:
+            rows = self.ads.run_query(query)
+            debug = {
+                "status": "success",
+                "error": "",
+                "query_window": f"{start} ~ {end}",
+                "customer_id": self.customer_id,
+                "timezone": timezone,
+                "gaql": "keyword_view (enabled + impressions>0)",
+            }
+        except Exception as exc:
+            error_text = " ".join(str(exc).splitlines()).strip()
+            return {
+                "rows": [],
+                "total": 0,
+                "window_label": f"{start} ~ {end}",
+                "debug": {
+                    "status": "error",
+                    "error": error_text,
+                    "query_window": f"{start} ~ {end}",
+                    "customer_id": self.customer_id,
+                    "timezone": timezone,
+                    "gaql": "keyword_view (enabled + impressions>0)",
+                },
+            }
+        formatted_rows = []
+        for row in rows:
+            keyword = row.ad_group_criterion.keyword
+            cost = row.metrics.cost_micros / 1_000_000
+            conversions = row.metrics.conversions or 0
+            all_conversions = row.metrics.all_conversions or 0
+            ctr = row.metrics.ctr * 100 if row.metrics.ctr else safe_div(row.metrics.clicks, row.metrics.impressions) * 100
+            cpa = row.metrics.cost_per_conversion / 1_000_000 if row.metrics.cost_per_conversion else safe_div(cost, conversions)
+            formatted_rows.append({
+                "campaign": row.campaign.name,
+                "ad_group": row.ad_group.name,
+                "keyword": keyword.text,
+                "match_type": self._format_match_type(str(keyword.match_type)),
+                "status": str(row.ad_group_criterion.status),
+                "impressions_display": format_int(row.metrics.impressions),
+                "clicks_display": format_int(row.metrics.clicks),
+                "ctr_display": f"{format_float(ctr, 2)}%",
+                "cost_display": format_currency(cost),
+                "conversions_display": format_float(conversions, 1),
+                "all_conversions_display": format_float(all_conversions, 1),
+                "cpa_display": format_currency(cpa) if conversions else "-",
+                "cost": cost,
+                "conversions": conversions,
+                "cpa": cpa if conversions else float("inf"),
+                "ctr": ctr,
+            })
+        formatted_rows.sort(key=lambda item: item["cost"], reverse=True)
+        return {
+            "rows": formatted_rows,
+            "total": len(formatted_rows),
+            "window_label": f"{start} ~ {end}",
+            "debug": debug,
+        }
+
+    def _build_keyword_country_efficiency(self, start_date: date, end_date: date) -> dict:
+        if start_date > end_date:
+            return {
+                "window_label": f"{start_date.isoformat()} ~ {end_date.isoformat()}",
+                "countries": [],
+                "debug": {
+                    "status": "error",
+                    "error": "기간이 올바르지 않습니다.",
+                    "query_window": f"{start_date.isoformat()} ~ {end_date.isoformat()}",
+                    "customer_id": self.customer_id,
+                    "timezone": self._get_ads_timezone(),
+                    "gaql": "search_term_view + geo_target_country",
+                },
+            }
+        start = start_date.isoformat()
+        end = end_date.isoformat()
+        timezone = self._get_ads_timezone()
+        query = (
+            "SELECT segments.geo_target_country, campaign.name, ad_group.name, "
+            "search_term_view.search_term, metrics.impressions, metrics.clicks, metrics.ctr, "
+            "metrics.cost_micros, metrics.conversions, metrics.all_conversions "
+            "FROM search_term_view "
+            f"WHERE segments.date BETWEEN '{start}' AND '{end}' "
+            "AND campaign.advertising_channel_type = 'SEARCH' "
+            "AND metrics.impressions > 0"
+        )
+        try:
+            rows = self.ads.run_query(query)
+            debug = {
+                "status": "success",
+                "error": "",
+                "query_window": f"{start} ~ {end}",
+                "customer_id": self.customer_id,
+                "timezone": timezone,
+                "gaql": "search_term_view + geo_target_country",
+            }
+        except Exception as exc:
+            error_text = " ".join(str(exc).splitlines()).strip()
+            return {
+                "window_label": f"{start} ~ {end}",
+                "countries": [],
+                "debug": {
+                    "status": "error",
+                    "error": error_text,
+                    "query_window": f"{start} ~ {end}",
+                    "customer_id": self.customer_id,
+                    "timezone": timezone,
+                "gaql": "search_term_view + geo_target_country",
+                },
+            }
+
+        resource_names = []
+        for row in rows:
+            resource = str(row.segments.geo_target_country)
+            if resource:
+                resource_names.append(resource)
+        geo_map = self._get_geo_target_names(sorted(set(resource_names)))
+
+        country_map = {}
+        for row in rows:
+            resource = str(row.segments.geo_target_country)
+            info = geo_map.get(resource, {})
+            country_name = info.get("name") or resource or "알 수 없음"
+            country_code = info.get("code") or ""
+            bucket = country_map.setdefault(country_name, {
+                "country": country_name,
+                "country_code": country_code,
+                "cost": 0.0,
+                "conversions": 0.0,
+                "all_conversions": 0.0,
+                "waste_cost": 0.0,
+                "rows": [],
+            })
+            cost = row.metrics.cost_micros / 1_000_000
+            conversions = row.metrics.conversions or 0
+            all_conversions = row.metrics.all_conversions or 0
+            ctr = row.metrics.ctr * 100 if row.metrics.ctr else safe_div(row.metrics.clicks, row.metrics.impressions) * 100
+            cpa = safe_div(cost, conversions) if conversions else float("inf")
+            cpc = safe_div(cost, row.metrics.clicks)
+            bucket["cost"] += cost
+            bucket["conversions"] += conversions
+            bucket["all_conversions"] += all_conversions
+            if conversions == 0:
+                bucket["waste_cost"] += cost
+            bucket["rows"].append({
+                "campaign": row.campaign.name,
+                "ad_group": row.ad_group.name,
+                "keyword": row.search_term_view.search_term,
+                "match_type": "검색어",
+                "status": "-",
+                "impressions": row.metrics.impressions,
+                "clicks": row.metrics.clicks,
+                "ctr": ctr,
+                "cost": cost,
+                "conversions": conversions,
+                "all_conversions": all_conversions,
+                "cpa": cpa,
+                "cpc": cpc,
+            })
+
+        countries = []
+        for country in country_map.values():
+            rows_list = country["rows"]
+            good = [row for row in rows_list if row["conversions"] >= 1 and row["clicks"] >= 3]
+            bad = [row for row in rows_list if row["conversions"] == 0 and row["clicks"] >= 3 and row["cost"] > 0]
+            good_sorted = sorted(good, key=lambda r: r["cpa"])[:10]
+            bad_sorted = sorted(bad, key=lambda r: r["cost"], reverse=True)[:10]
+            avg_cpa = safe_div(country["cost"], country["conversions"]) if country["conversions"] else float("inf")
+            waste_share = safe_div(country["waste_cost"], country["cost"]) if country["cost"] else 0.0
+            countries.append({
+                "country": country["country"],
+                "country_code": country["country_code"],
+                "cost": country["cost"],
+                "conversions": country["conversions"],
+                "avg_cpa": avg_cpa,
+                "waste_share": waste_share,
+                "cost_display": format_currency(country["cost"]),
+                "conversions_display": format_float(country["conversions"], 1),
+                "avg_cpa_display": format_currency(avg_cpa) if country["conversions"] else "∞",
+                "waste_share_display": format_percent(waste_share * 100, 1),
+                "good_keywords": [
+                    {
+                        "campaign": row["campaign"],
+                        "ad_group": row["ad_group"],
+                        "keyword": row["keyword"],
+                        "match_type": row["match_type"],
+                        "cost_display": format_currency(row["cost"]),
+                        "clicks_display": format_int(row["clicks"]),
+                        "ctr_display": f"{format_float(row['ctr'], 2)}%",
+                        "conversions_display": format_float(row["conversions"], 1),
+                        "cpa_display": format_currency(row["cpa"]) if row["conversions"] else "-",
+                    }
+                    for row in good_sorted
+                ],
+                "bad_keywords": [
+                    {
+                        "campaign": row["campaign"],
+                        "ad_group": row["ad_group"],
+                        "keyword": row["keyword"],
+                        "match_type": row["match_type"],
+                        "cost_display": format_currency(row["cost"]),
+                        "clicks_display": format_int(row["clicks"]),
+                        "ctr_display": f"{format_float(row['ctr'], 2)}%",
+                        "conversions_display": format_float(row["conversions"], 1),
+                        "cpa_display": "-",
+                    }
+                    for row in bad_sorted
+                ],
+            })
+        countries.sort(key=lambda item: item["cost"], reverse=True)
+        return {
+            "window_label": f"{start} ~ {end}",
+            "countries": countries,
+            "debug": debug,
+        }
 
     def _format_match_type(self, match_type: str) -> str:
         mapping = {
@@ -3112,6 +3392,9 @@ def build_render_context(
         "search_terms": report_data["search_terms"],
         "wasted_summary": report_data["wasted_summary"],
         "active_keywords_7d": report_data["active_keywords_7d"],
+        "keywords_all_time": report_data["keywords_all_time"],
+        "keyword_country_efficiency_30d": report_data["keyword_country_efficiency_30d"],
+        "keyword_country_efficiency_all_time": report_data["keyword_country_efficiency_all_time"],
         "conversion_definitions": report_data["conversion_definitions"],
         "ads_conversion_debug": report_data["ads_conversion_debug"],
         "exec_summary": report_data["exec_summary"],

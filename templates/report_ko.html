@@ -247,6 +247,24 @@
       border: 1px solid var(--line);
       border-radius: 14px;
     }
+    .table-filter {
+      width: 100%;
+      margin: 10px 0 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .country-grid {
+      display: grid;
+      gap: 16px;
+    }
+    .country-card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 14px;
+      background: #fff;
+    }
     table {
       border-collapse: collapse;
       width: 100%;
@@ -531,6 +549,178 @@
         </div>
         {% endif %}
       </details>
+    </section>
+    <section class="section">
+      <div class="section-title">전체기간 키워드 ({{ keywords_all_time.window_label }})</div>
+      <div class="note">Ads 시간대: {{ keywords_all_time.debug.timezone }} · 총 {{ keywords_all_time.total }}개 행</div>
+      <div class="toggle-group">
+        <button class="toggle-btn active" data-sort-table="keywords-all-time" data-sort-key="cost">비용순</button>
+        <button class="toggle-btn" data-sort-table="keywords-all-time" data-sort-key="conversions">전환순</button>
+        <button class="toggle-btn" data-sort-table="keywords-all-time" data-sort-key="cpa">CPA순</button>
+        <button class="toggle-btn" data-sort-table="keywords-all-time" data-sort-key="ctr">CTR순</button>
+      </div>
+      <input class="table-filter" data-filter-table="keywords-all-time" placeholder="캠페인/광고그룹/키워드 검색">
+      <details>
+        <summary>테이블 펼치기/접기</summary>
+        {% if keywords_all_time.rows %}
+        <div class="table-wrap">
+          <table data-sort-table="keywords-all-time">
+            <thead>
+              <tr>
+                <th>캠페인</th>
+                <th>광고그룹</th>
+                <th>키워드</th>
+                <th>매칭타입</th>
+                <th>상태</th>
+                <th>노출</th>
+                <th>클릭</th>
+                <th>CTR</th>
+                <th>비용</th>
+                <th>전환</th>
+                <th>전체전환</th>
+                <th>CPA</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in keywords_all_time.rows %}
+              <tr data-cost="{{ row.cost }}" data-conversions="{{ row.conversions }}" data-cpa="{{ row.cpa }}" data-ctr="{{ row.ctr }}">
+                <td>{{ row.campaign }}</td>
+                <td>{{ row.ad_group }}</td>
+                <td>{{ row.keyword }}</td>
+                <td>{{ row.match_type }}</td>
+                <td>{{ row.status }}</td>
+                <td>{{ row.impressions_display }}</td>
+                <td>{{ row.clicks_display }}</td>
+                <td>{{ row.ctr_display }}</td>
+                <td>{{ row.cost_display }}</td>
+                <td>{{ row.conversions_display }}</td>
+                <td>{{ row.all_conversions_display }}</td>
+                <td>{{ row.cpa_display }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <div>상태: {{ keywords_all_time.debug.status }}</div>
+          <div>에러: {{ keywords_all_time.debug.error or "없음" }}</div>
+          <div>조회 기간: {{ keywords_all_time.debug.query_window }}</div>
+          <div>Ads 시간대: {{ keywords_all_time.debug.timezone }}</div>
+          <div>고객 ID: {{ keywords_all_time.debug.customer_id }}</div>
+          <div>쿼리: {{ keywords_all_time.debug.gaql }}</div>
+        </div>
+        {% endif %}
+      </details>
+    </section>
+    <section class="section">
+      <div class="section-title">국가별 키워드 효율 분석</div>
+      <div class="toggle-group" data-range-toggle="country-keywords">
+        <button class="toggle-btn active" data-range="30d">최근 30일</button>
+        <button class="toggle-btn" data-range="all">전체기간</button>
+      </div>
+      {% for key, data in {"30d": keyword_country_efficiency_30d, "all": keyword_country_efficiency_all_time}.items() %}
+      <div class="toggle-panel {% if key != '30d' %}hidden{% endif %}" data-toggle-panel="country-keywords" data-range="{{ key }}">
+        <div class="note">조회 기간: {{ data.window_label }} · Ads 시간대: {{ data.debug.timezone }}</div>
+        <div class="toggle-group">
+          <button class="toggle-btn active" data-sort-country="country-{{ key }}" data-sort-key="cost">총비용순</button>
+          <button class="toggle-btn" data-sort-country="country-{{ key }}" data-sort-key="conversions">총전환순</button>
+        </div>
+        {% if data.countries %}
+        <div class="country-grid" data-country-list="country-{{ key }}">
+          {% for country in data.countries %}
+          <details class="country-card" data-cost="{{ country.cost }}" data-conversions="{{ country.conversions }}">
+            <summary>{{ country.country }}</summary>
+            <div class="note">
+              총비용 {{ country.cost_display }} · 총전환 {{ country.conversions_display }} · 평균 CPA {{ country.avg_cpa_display }} · 전환0 비용 비중 {{ country.waste_share_display }}
+            </div>
+            <div class="chart-title">좋은 키워드 TOP10 (CPA 낮음)</div>
+            {% if country.good_keywords %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>캠페인</th>
+                    <th>광고그룹</th>
+                    <th>키워드</th>
+                    <th>매칭타입</th>
+                    <th>비용</th>
+                    <th>클릭</th>
+                    <th>CTR</th>
+                    <th>전환</th>
+                    <th>CPA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in country.good_keywords %}
+                  <tr>
+                    <td>{{ row.campaign }}</td>
+                    <td>{{ row.ad_group }}</td>
+                    <td>{{ row.keyword }}</td>
+                    <td>{{ row.match_type }}</td>
+                    <td>{{ row.cost_display }}</td>
+                    <td>{{ row.clicks_display }}</td>
+                    <td>{{ row.ctr_display }}</td>
+                    <td>{{ row.conversions_display }}</td>
+                    <td>{{ row.cpa_display }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <div class="empty-state">데이터 없음</div>
+            {% endif %}
+            <div class="chart-title">나쁜 키워드 TOP10 (전환 0)</div>
+            {% if country.bad_keywords %}
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>캠페인</th>
+                    <th>광고그룹</th>
+                    <th>키워드</th>
+                    <th>매칭타입</th>
+                    <th>비용</th>
+                    <th>클릭</th>
+                    <th>CTR</th>
+                    <th>전환</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for row in country.bad_keywords %}
+                  <tr>
+                    <td>{{ row.campaign }}</td>
+                    <td>{{ row.ad_group }}</td>
+                    <td>{{ row.keyword }}</td>
+                    <td>{{ row.match_type }}</td>
+                    <td>{{ row.cost_display }}</td>
+                    <td>{{ row.clicks_display }}</td>
+                    <td>{{ row.ctr_display }}</td>
+                    <td>{{ row.conversions_display }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <div class="empty-state">데이터 없음</div>
+            {% endif %}
+          </details>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state">
+          <div>상태: {{ data.debug.status }}</div>
+          <div>에러: {{ data.debug.error or "없음" }}</div>
+          <div>조회 기간: {{ data.debug.query_window }}</div>
+          <div>Ads 시간대: {{ data.debug.timezone }}</div>
+          <div>고객 ID: {{ data.debug.customer_id }}</div>
+          <div>쿼리: {{ data.debug.gaql }}</div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
     </section>
     <section class="section">
       <div class="section-title">월간 요약 (최근 12개월)</div>
@@ -1122,6 +1312,84 @@
       });
     }
 
+    function bindLocalToggle(group) {
+      const buttons = document.querySelectorAll(`[data-range-toggle="${group}"] .toggle-btn`);
+      buttons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const range = btn.dataset.range;
+          buttons.forEach(other => other.classList.toggle("active", other === btn));
+          const panels = document.querySelectorAll(`[data-toggle-panel="${group}"]`);
+          panels.forEach(panel => panel.classList.toggle("hidden", panel.dataset.range !== range));
+        });
+      });
+    }
+
+    function bindTableFilters() {
+      const inputs = document.querySelectorAll("[data-filter-table]");
+      inputs.forEach(input => {
+        input.addEventListener("input", () => {
+          const target = input.dataset.filterTable;
+          const table = document.querySelector(`table[data-sort-table="${target}"]`);
+          if (!table) return;
+          const query = input.value.trim().toLowerCase();
+          const rows = table.querySelectorAll("tbody tr");
+          rows.forEach(row => {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(query) ? "" : "none";
+          });
+        });
+      });
+    }
+
+    function bindTableSorts() {
+      const buttons = document.querySelectorAll("[data-sort-table][data-sort-key]");
+      buttons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.sortTable;
+          const key = btn.dataset.sortKey;
+          const table = document.querySelector(`table[data-sort-table="${target}"]`);
+          if (!table) return;
+          buttons.forEach(other => {
+            if (other.dataset.sortTable === target) {
+              other.classList.toggle("active", other === btn);
+            }
+          });
+          const rows = Array.from(table.querySelectorAll("tbody tr"));
+          rows.sort((a, b) => {
+            const aVal = parseFloat(a.dataset[key]) || 0;
+            const bVal = parseFloat(b.dataset[key]) || 0;
+            return bVal - aVal;
+          });
+          const tbody = table.querySelector("tbody");
+          rows.forEach(row => tbody.appendChild(row));
+        });
+      });
+    }
+
+    function bindCountrySorts() {
+      const buttons = document.querySelectorAll("[data-sort-country][data-sort-key]");
+      buttons.forEach(btn => {
+        btn.addEventListener("click", () => {
+          const target = btn.dataset.sortCountry;
+          const key = btn.dataset.sortKey;
+          buttons.forEach(other => {
+            if (other.dataset.sortCountry === target) {
+              other.classList.toggle("active", other === btn);
+            }
+          });
+          const container = document.querySelector(`[data-country-list="${target}"]`);
+          if (!container) return;
+          const cards = Array.from(container.children);
+          cards.sort((a, b) => {
+            const aVal = parseFloat(a.dataset[key]) || 0;
+            const bVal = parseFloat(b.dataset[key]) || 0;
+            return bVal - aVal;
+          });
+          cards.forEach(card => container.appendChild(card));
+        });
+      });
+    }
+
     function applyRange(range) {
       setActiveButtons(range);
       showPanels(range);
@@ -1130,6 +1398,10 @@
 
     applyRange("7d");
     bindGlobalToggle();
+    bindLocalToggle("country-keywords");
+    bindTableFilters();
+    bindTableSorts();
+    bindCountrySorts();
     showPanels("7d");
   </script>
 </body>
