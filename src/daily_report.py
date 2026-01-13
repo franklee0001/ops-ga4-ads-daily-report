@@ -260,6 +260,14 @@ class ReportGenerator:
         keywords_all_time = self._build_all_time_keywords(start, end)
         keyword_country_efficiency_30d = self._build_keyword_country_efficiency(last_30_complete_start, last_30_end)
         keyword_country_efficiency_all_time = self._build_keyword_country_efficiency(start, end)
+        weekly_rolling_summary = self._build_rolling_weekly_summary(
+            last_7_dates,
+            ga4_daily,
+            ga4_has_data,
+            ads_daily,
+            ads_has_data,
+            keyword_tables,
+        )
         today_date = end
         yesterday_date = end - timedelta(days=1)
         today_keyword_rows = self._get_ads_keyword_rows(today_date, today_date)
@@ -377,6 +385,7 @@ class ReportGenerator:
             "keywords_all_time": keywords_all_time,
             "keyword_country_efficiency_30d": keyword_country_efficiency_30d,
             "keyword_country_efficiency_all_time": keyword_country_efficiency_all_time,
+            "weekly_rolling_summary": weekly_rolling_summary,
             "conversion_definitions": conversion_definitions,
             "ads_conversion_debug": ads_conversion_debug,
             "exec_summary": exec_summary,
@@ -2301,6 +2310,168 @@ class ReportGenerator:
             "seo_conversions": seo_values,
         }
 
+    def _build_rolling_weekly_summary(
+        self,
+        last_7_dates: list[str],
+        ga4_daily: dict,
+        ga4_has_data: bool,
+        ads_daily: dict,
+        ads_has_data: bool,
+        keyword_tables: dict,
+    ) -> dict:
+        if not last_7_dates:
+            return {
+                "has_data": False,
+                "range": "",
+                "cards": [],
+                "countries": [],
+                "others_display": None,
+                "landing_pages": [],
+                "channels": [],
+                "wasted_keywords": [],
+                "best_keywords": [],
+            }
+        start = last_7_dates[0]
+        end = last_7_dates[-1]
+
+        visitors = None
+        if ga4_has_data:
+            visitors = sum(float(ga4_daily[date_key]["activeUsers"]) for date_key in last_7_dates)
+
+        countries = []
+        others_display = None
+        if ga4_has_data:
+            try:
+                rows = self.ga4.run_report(["country"], ["activeUsers"], start, end)
+            except Exception:
+                rows = []
+            if rows:
+                total_active = sum(float(row.get("activeUsers", 0)) for row in rows)
+                sorted_rows = sorted(rows, key=lambda r: float(r.get("activeUsers", 0)), reverse=True)
+                top5 = sorted_rows[:5]
+                top_sum = sum(float(row.get("activeUsers", 0)) for row in top5)
+                others = max(total_active - top_sum, 0)
+                countries = [
+                    {"country": row.get("country", "알 수 없음"), "active_display": format_int(row.get("activeUsers", 0))}
+                    for row in top5
+                ]
+                if others > 0:
+                    others_display = format_int(others)
+
+        landing_pages = []
+        if ga4_has_data:
+            try:
+                rows = self.ga4.run_report(["landingPagePlusQueryString"], ["sessions"], start, end)
+            except Exception:
+                rows = []
+            if rows:
+                sorted_rows = sorted(rows, key=lambda r: float(r.get("sessions", 0)), reverse=True)[:3]
+                landing_pages = [
+                    {"page": row.get("landingPagePlusQueryString", "알 수 없음"), "sessions_display": format_int(row.get("sessions", 0))}
+                    for row in sorted_rows
+                ]
+
+        channels = []
+        if ga4_has_data:
+            try:
+                rows = self.ga4.run_report(["sessionSourceMedium"], ["sessions", "activeUsers"], start, end)
+            except Exception:
+                rows = []
+            if rows:
+                sorted_rows = sorted(rows, key=lambda r: float(r.get("sessions", 0)), reverse=True)[:10]
+                channels = [
+                    {
+                        "source_medium": row.get("sessionSourceMedium", "알 수 없음"),
+                        "sessions_display": format_int(row.get("sessions", 0)),
+                        "active_display": format_int(row.get("activeUsers", 0)),
+                    }
+                    for row in sorted_rows
+                ]
+
+        seo_conversions = None
+        if ga4_has_data:
+            try:
+                rows = self.ga4.run_report(
+                    ["eventName", "sessionMedium"],
+                    ["eventCount"],
+                    start,
+                    end,
+                    limit=100000,
+                )
+                seo_conversions = 0.0
+                for row in rows:
+                    event_name = (row.get("eventName") or "").lower()
+                    if event_name not in INQUIRY_EVENT_NAMES:
+                        continue
+                    if (row.get("sessionMedium") or "").lower() != "organic":
+                        continue
+                    seo_conversions += float(row.get("eventCount", 0))
+            except Exception:
+                seo_conversions = None
+
+        ads_cost = None
+        ads_clicks = None
+        ads_impressions = None
+        ads_conversions = None
+        if ads_has_data:
+            ads_cost = sum(float(ads_daily[date_key]["cost"]) for date_key in last_7_dates)
+            ads_clicks = sum(float(ads_daily[date_key]["clicks"]) for date_key in last_7_dates)
+            ads_impressions = sum(float(ads_daily[date_key]["impressions"]) for date_key in last_7_dates)
+            ads_conversions = sum(float(ads_daily[date_key]["conversions"]) for date_key in last_7_dates)
+
+        total_conversions = None
+        if ads_conversions is not None and seo_conversions is not None:
+            total_conversions = ads_conversions + seo_conversions
+
+        ctr_value = None
+        if ads_impressions and ads_clicks is not None:
+            ctr_value = safe_div(ads_clicks, ads_impressions) * 100
+
+        def format_value(value: float | None, formatter):
+            if value is None:
+                return "데이터 없음"
+            return formatter(value)
+
+        cards = [
+            {"label": "방문자 수(활성 사용자)", "value": format_value(visitors, format_int)},
+            {"label": "Ads 비용", "value": format_value(ads_cost, format_currency)},
+            {"label": "Ads 전환", "value": format_value(ads_conversions, lambda v: format_float(v, 1))},
+            {"label": "SEO 전환", "value": format_value(seo_conversions, lambda v: format_float(v, 1))},
+            {"label": "전환 수(전체)", "value": format_value(total_conversions, lambda v: format_float(v, 1))},
+            {"label": "CTR", "value": format_value(ctr_value, lambda v: format_percent(v, 1))},
+        ]
+
+        rows_7 = keyword_tables.get("last_7", {}).get("rows", [])
+        wasted = [r for r in rows_7 if r.get("cost_micros", 0) > 0 and r.get("conversions", 0) == 0]
+        wasted_sorted = sorted(wasted, key=lambda r: r.get("cost_micros", 0), reverse=True)[:10]
+        wasted_keywords = [
+            {"keyword": row.get("keyword", "알 수 없음"), "cost_display": format_currency(row.get("cost_micros", 0) / 1_000_000)}
+            for row in wasted_sorted
+        ]
+
+        best = [r for r in rows_7 if r.get("conversions", 0) >= 1]
+        best_sorted = sorted(best, key=lambda r: safe_div(r.get("cost_micros", 0) / 1_000_000, r.get("conversions", 0)))[:10]
+        best_keywords = [
+            {
+                "keyword": row.get("keyword", "알 수 없음"),
+                "cpa_display": format_currency(safe_div(row.get("cost_micros", 0) / 1_000_000, row.get("conversions", 0))),
+                "conversions_display": format_float(row.get("conversions", 0), 1),
+            }
+            for row in best_sorted
+        ]
+
+        return {
+            "has_data": True,
+            "range": f"{start} ~ {end}",
+            "cards": cards,
+            "countries": countries,
+            "others_display": others_display,
+            "landing_pages": landing_pages,
+            "channels": channels,
+            "wasted_keywords": wasted_keywords,
+            "best_keywords": best_keywords,
+        }
+
     def _build_waste_actions(self, action_cards: list[dict], tables: dict) -> list[str]:
         pause = ", ".join(action_cards[0]["items_list"]) if action_cards else "없음"
         negative = ", ".join(action_cards[1]["items_list"]) if len(action_cards) > 1 else "없음"
@@ -3521,6 +3692,7 @@ def build_render_context(
         "keywords_all_time": report_data["keywords_all_time"],
         "keyword_country_efficiency_30d": report_data["keyword_country_efficiency_30d"],
         "keyword_country_efficiency_all_time": report_data["keyword_country_efficiency_all_time"],
+        "weekly_rolling_summary": report_data["weekly_rolling_summary"],
         "conversion_definitions": report_data["conversion_definitions"],
         "ads_conversion_debug": report_data["ads_conversion_debug"],
         "exec_summary": report_data["exec_summary"],

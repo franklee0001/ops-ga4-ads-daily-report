@@ -445,20 +445,164 @@
         <div>
           <div class="title">{{ report_title }}</div>
           <div class="subtitle">기간: {{ period_start }} ~ {{ period_end }}</div>
-          <div class="build-meta">
-            Build: {{ build_info.source }} / {{ build_info.sha_short }} / {{ build_info.generated_at }}
-            {% if build_info.run_url %}
-            · <a href="{{ build_info.run_url }}" target="_blank" rel="noopener">이 빌드의 Actions run 열기</a>
-            {% endif %}
-          </div>
+      <!-- build-info hidden: {{ build_info.source }} / {{ build_info.sha_short }} / {{ build_info.generated_at }} -->
         </div>
       </div>
       <div class="meta">
         <div><strong>생성 시각</strong> {{ generated_at }}</div>
         <div><strong>기준 시간대</strong> Asia/Seoul</div>
-        <div class="build-meta">빌드: {{ build_metadata.env }} / {{ build_metadata.git_sha }} / {{ build_metadata.generated_at }}</div>
+        <!-- build-metadata hidden: {{ build_metadata.env }} / {{ build_metadata.git_sha }} / {{ build_metadata.generated_at }} -->
       </div>
     </header>
+    <section class="section">
+      <div class="section-title">최근 7일 핵심 요약(자동 롤링)</div>
+      <div class="note">기간: {{ weekly_rolling_summary.range }} (KST)</div>
+      <div class="top-strip">
+        {% for card in weekly_rolling_summary.cards %}
+        <div class="strip-card">
+          <div class="strip-label">{{ card.label }}</div>
+          <div class="strip-value">{{ card.value }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="chart-grid">
+        <div class="chart-card">
+          <div class="chart-title">방문 국가 Top 5</div>
+          {% if weekly_rolling_summary.countries %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>국가</th>
+                  <th>활성 사용자</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_rolling_summary.countries %}
+                <tr>
+                  <td>{{ row.country }}</td>
+                  <td>{{ row.active_display }}</td>
+                </tr>
+                {% endfor %}
+                {% if weekly_rolling_summary.others_display %}
+                <tr>
+                  <td>기타</td>
+                  <td>{{ weekly_rolling_summary.others_display }}</td>
+                </tr>
+                {% endif %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">데이터 없음</div>
+          {% endif %}
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">방문 많은 페이지 Top 3 (세션)</div>
+          {% if weekly_rolling_summary.landing_pages %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>페이지</th>
+                  <th>세션</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_rolling_summary.landing_pages %}
+                <tr>
+                  <td>{{ row.page }}</td>
+                  <td>{{ row.sessions_display }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">데이터 없음</div>
+          {% endif %}
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">유입경로 Top 10 (source/medium)</div>
+          {% if weekly_rolling_summary.channels %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>source/medium</th>
+                  <th>세션</th>
+                  <th>활성 사용자</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_rolling_summary.channels %}
+                <tr>
+                  <td>{{ row.source_medium }}</td>
+                  <td>{{ row.sessions_display }}</td>
+                  <td>{{ row.active_display }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">데이터 없음</div>
+          {% endif %}
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">낭비 키워드 Top 10 (전환 0)</div>
+          {% if weekly_rolling_summary.wasted_keywords %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>키워드</th>
+                  <th>비용</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_rolling_summary.wasted_keywords %}
+                <tr>
+                  <td>{{ row.keyword }}</td>
+                  <td>{{ row.cost_display }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">데이터 없음</div>
+          {% endif %}
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">효율 좋은 키워드 Top 10 (CPA 낮음)</div>
+          {% if weekly_rolling_summary.best_keywords %}
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>키워드</th>
+                  <th>CPA</th>
+                  <th>전환</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in weekly_rolling_summary.best_keywords %}
+                <tr>
+                  <td>{{ row.keyword }}</td>
+                  <td>{{ row.cpa_display }}</td>
+                  <td>{{ row.conversions_display }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+          {% else %}
+          <div class="empty-state">데이터 없음</div>
+          {% endif %}
+        </div>
+      </div>
+    </section>
     <section class="section">
       <div class="section-title">오늘/어제 핵심 요약</div>
       <div class="note"><a href="#ads-conversion-debug">Ads 전환 진단 보기</a></div>
